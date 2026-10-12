@@ -21,12 +21,12 @@ import { useOpenBooking } from "../shell/Shell";
 import { DownloadButton } from "../ui/kit";
 
 type Period = "upcoming" | "current" | "past" | "";
-type SortKey = "name" | "checkin" | "amount";
+type SortKey = "name" | "checkin" | "amount" | "createdAt";
 type Sort = { k: SortKey; dir: 1 | -1 } | null;
 
 function sortRows(list: Booking[], sort: Sort): Booking[] {
   if (!sort) return list;
-  const key = (b: Booking): string | number => (sort.k === "name" ? (b.guestName || "").toLocaleLowerCase("fr") : sort.k === "checkin" ? b.checkin : b.totalCents);
+  const key = (b: Booking): string | number => (sort.k === "name" ? (b.guestName || "").toLocaleLowerCase("fr") : sort.k === "checkin" ? b.checkin : sort.k === "createdAt" ? b.createdAt : b.totalCents);
   return [...list].sort((a, b) => {
     const x = key(a);
     const y = key(b);
@@ -151,6 +151,7 @@ export function BookingsPage() {
                 <SortTh k="name" sort={sort} onSort={setSort}>{t`Client`}</SortTh>
                 <th scope="col" className="hide-s">{t`Bien`}</th>
                 <SortTh k="checkin" sort={sort} onSort={setSort}>{t`Séjour`}</SortTh>
+                <SortTh k="createdAt" sort={sort} onSort={setSort}>{t`Date de soumission`}</SortTh>
                 <SortTh k="amount" sort={sort} onSort={setSort} right>{t`Total`}</SortTh>
                 <th scope="col" className="r hide-s">{t`Payé`}</th>
                 <th scope="col" className="hide-s">{t`État`}</th>
@@ -178,6 +179,7 @@ export function BookingsPage() {
                         {phaseOf(b) ? <span className="phase"> · {phaseOf(b)}</span> : null}
                       </small>
                     </td>
+                    <td className="muted">{b.createdAt.slice(0, 10)}</td>
                     <td className="r mc-r">
                       <b className="amt">{st === "plat" && !b.totalCents ? "—" : eur(b.totalCents)}</b>
                       {st === "solde" ? <small>{t`reste ${eur(balance)}`}</small> : null}

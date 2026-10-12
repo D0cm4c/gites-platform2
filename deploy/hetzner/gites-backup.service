@@ -1,0 +1,11 @@
+# Rôle : sauvegarde locale de la base SQLite et des photos (voir sauvegarde.sh).
+# Usage : lancé par gites-backup.timer à 3 h 30 ; à la main : sudo systemctl start gites-backup
+[Unit]
+Description=Sauvegarde des gîtes (SQLite + photos)
+
+[Service]
+Type=oneshot
+User=gites
+Group=gites
+EnvironmentFile=/srv/gites/.env
+ExecStart=/srv/gites/sauvegarde.sh

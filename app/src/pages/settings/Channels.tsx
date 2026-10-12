@@ -25,6 +25,7 @@ import { Confirm, Empty, Fold, Loading, Page, SaveBar, Section, SidePanel, sqlWh
 
 export function ChannelsPage() {
   const { t } = useLingui();
+  const detailWords: Record<string, string> = { rooms: t`chambres`, pushed: t`envoyés`, updated: t`mis à jour`, created: t`créés`, par: t`par` };
   const { property, picker } = useWorkingProperty();
   const pid = property?.id;
   const ov = useQuery({ queryKey: ["channels", pid], queryFn: () => api<ChannelsOverview>("/channels/overview", { query: { property: pid } }), enabled: pid != null });
@@ -144,7 +145,7 @@ export function ChannelsPage() {
               {d.events.map((e) => (
                 <li key={e.id}>
                   <b>{sqlWhen(e.createdAt)}</b> {beds24Action(e.action)}
-                  {e.detail ? <small>{e.detail.slice(0, 140)}</small> : null}
+                  {e.detail ? <small>{readableDetail(e.detail, detailWords)}</small> : null}
                 </li>
               ))}
             </ul>
@@ -443,4 +444,18 @@ function ConflictPanel({ c, onClose }: { c: SyncConflict; onClose: () => void })
       </Confirm>
     </SidePanel>
   );
+}
+
+/** Le détail d'un événement de liaison arrive en JSON brut : on le lit en français (« 2 chambres »), sans accolades. */
+function readableDetail(detail: string, words: Record<string, string>): string {
+  if (!detail.startsWith("{")) return detail.slice(0, 140);
+  try {
+    const o = JSON.parse(detail) as Record<string, unknown>;
+    return Object.entries(o)
+      .map(([k, v]) => `${words[k] ?? k} : ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+      .join(", ")
+      .slice(0, 140);
+  } catch {
+    return detail.slice(0, 140);
+  }
 }

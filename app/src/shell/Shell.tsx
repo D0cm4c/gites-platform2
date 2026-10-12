@@ -7,11 +7,11 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import { AppShell, Drawer, Menu, Tooltip } from "@mantine/core";
 import { useHotkeys } from "@mantine/hooks";
 import { IconBrush, IconCalendar, IconCheck, IconDots, IconHome2, IconLayoutSidebarLeftCollapse, IconLayoutSidebarLeftExpand, IconLogout, IconMessage, IconSelector, IconSun } from "@tabler/icons-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { currentUser, logout } from "../api/client";
+import { api, currentUser, logout } from "../api/client";
 import { useMessages, useProperties, useTasks } from "../api/hooks";
 import { BookingPanel } from "../booking/BookingPanel";
 import { addDays, todayBrussels } from "../lib/dates";
@@ -19,6 +19,8 @@ import { useScope, type Scope } from "../lib/scope";
 import { useLayout } from "../lib/useLayout";
 import { Confirm, hasUnsaved } from "../ui/kit";
 import { SaleProvider } from "../sale/SaleFlow";
+import { SuggestionButton } from "../improvements/SuggestionButton";
+import type { ImprovementList } from "../improvements/types";
 import { useNav, type NavEntry } from "./nav";
 
 const FOLD_KEY = "gp2_nav_replie";
@@ -91,21 +93,28 @@ function DomainSelector({ variant }: { variant: "side" | "top" | "icon" }) {
 }
 
 /** Compteurs des entrées : messages non lus, ménages du jour pas encore faits. */
-function useCounts(): Record<"unread" | "cleaning", number> {
+type BadgeKind = "unread" | "cleaning" | "improvements";
+function useCounts(): Record<BadgeKind, number> {
   const today = todayBrussels();
   const unread = useMessages("nouveau").data?.length ?? 0;
   const tasks = useTasks(today, addDays(today, 1)).data ?? [];
   const cleaning = tasks.filter((x) => x.dueDate === today && x.status !== "fait" && x.status !== "annule").length;
-  return { unread, cleaning };
+  // Remarques d'amélioration encore « nouveau » (l'entrée Réglages › Améliorations).
+  const improvements = useQuery({ queryKey: ["improvements", "nouveau"], queryFn: () => api<ImprovementList>("/improvements", { query: { status: "nouveau" } }) }).data?.counts.nouveau ?? 0;
+  return { unread, cleaning, improvements };
 }
 
-function Badge({ n, kind }: { n: number; kind: "unread" | "cleaning" }) {
+function Badge({ n, kind }: { n: number; kind: BadgeKind }) {
   const { t } = useLingui();
   if (!n) return null;
   return (
     <span className={`badge b-${kind}`}>
       <span aria-hidden>{n}</span>
-      <span className="sr">{kind === "unread" ? (n > 1 ? t`, ${n} non lus` : t`, 1 non lu`) : n > 1 ? t`, ${n} aujourd'hui` : t`, 1 aujourd'hui`}</span>
+      <span className="sr">{kind === "unread"
+          ? n > 1 ? t`, ${n} non lus` : t`, 1 non lu`
+          : kind === "improvements"
+            ? n > 1 ? t`, ${n} nouvelles` : t`, 1 nouvelle`
+            : n > 1 ? t`, ${n} aujourd'hui` : t`, 1 aujourd'hui`}</span>
     </span>
   );
 }
@@ -331,6 +340,7 @@ export function Shell() {
         </AppShell.Main>
       </AppShell>
       {layout === "B" ? <TabBar /> : null}
+      <SuggestionButton />
       <BookingPanel
         id={search.resa ?? null}
         onClose={() => void navigate({ to: ".", search: (s: object) => ({ ...s, resa: undefined }) })}

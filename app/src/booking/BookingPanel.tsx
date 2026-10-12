@@ -13,6 +13,7 @@ import {
   IconCopy,
   IconCurrencyEuro,
   IconDots,
+  IconFileText,
   IconHome,
   IconMail,
   IconMessage,
@@ -24,7 +25,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { api } from "../api/client";
+import { api, openAdminPdf } from "../api/client";
 import { useBooking, useGuest, useProperties } from "../api/hooks";
 import type { AuditEntry, Booking, BookingDetail, Guest, QuoteResponse } from "../api/types";
 import { ErrorLine, useAction } from "../lib/action";
@@ -337,7 +338,10 @@ function Fiche({ detail, dialog, setDialog }: { detail: BookingDetail; dialog: D
                   .map((m) => (
                     <tr key={m.id}>
                       <td>{sqlWhen(m.createdAt)}</td>
-                      <td>{m.subject}</td>
+                      <td>
+                        {m.subject}
+                        {m.attachments && m.attachments.length > 0 ? <small>{t`Pièce jointe :`} {m.attachments.map((a) => a.filename).join(", ")}</small> : null}
+                      </td>
                       <td>{m.toEmail ?? ""}</td>
                       <td>
                         <span className={`pill ${m.status === "sent" ? "soldee" : m.status === "failed" ? "annulee" : "muted-pill"}`}>
@@ -443,6 +447,7 @@ const HISTORY: Record<string, MessageDescriptor> = {
   "payment.manual": msg`paiement noté à la main`,
   "email.balance_reminder": msg`rappel du solde envoyé`,
   "email.voucher_resent": msg`confirmation renvoyée au client`,
+  "email.confirmation_resent": msg`confirmation et conditions générales renvoyées au client`,
   "message.reply": msg`message envoyé au client`,
 };
 function historyLabel(action: string): string {
@@ -458,7 +463,8 @@ function MainActions({ b, state, balance, setDialog }: { b: Booking; state: Book
   const confirm = useAction();
   const remind = useAction();
   const voucher = useAction();
-  const err = [confirm, remind, voucher].find((a) => a.state.status === "error")?.state;
+  const confirmationPdf = useAction();
+  const err = [confirm, remind, voucher, confirmationPdf].find((a) => a.state.status === "error")?.state;
   const btn = (key: string, icon: ReactNode, label: string, onClick: () => void, pri = false, a?: ReturnType<typeof useAction>) => (
     <button
       key={key}
@@ -494,13 +500,14 @@ function MainActions({ b, state, balance, setDialog }: { b: Booking; state: Book
   } else {
     acts = [
       write,
-      btn("voucher", <IconSend size={22} />, t`Renvoyer la confirmation`, () => void voucher.run(() => api(`/bookings/${b.id}/resend-voucher`, { method: "POST" }), t`C'est fait. Confirmation renvoyée au client.`), false, voucher),
+      btn("voucher", <IconSend size={22} />, t`Renvoyer la confirmation`, () => void voucher.run(() => api(`/bookings/${b.id}/resend-confirmation`, { method: "POST" }), t`C'est fait. Confirmation et conditions générales renvoyées au client.`), false, voucher),
+      btn("confirmation-pdf", <IconFileText size={22} />, t`Confirmation PDF`, () => void confirmationPdf.run(() => openAdminPdf(`/bookings/${b.id}/confirmation.pdf`), t`Confirmation ouverte dans un nouvel onglet.`), false, confirmationPdf),
       btn("edit", <IconCalendar size={22} />, t`Modifier`, () => setDialog("edit")),
     ];
   }
   return (
     <>
-      <div className="main-acts" style={acts.length === 2 ? { gridTemplateColumns: "1fr 1fr" } : undefined}>
+      <div className="main-acts" style={acts.length === 2 || acts.length === 4 ? { gridTemplateColumns: "1fr 1fr" } : undefined}>
         {acts}
       </div>
       {state === "plat" ? <p className="muted" style={{ fontSize: 15 }}>{t`Les dates, l'annulation et le paiement de cette réservation se gèrent sur ${channelName(b)} : la grille suivra.`}</p> : null}
@@ -512,6 +519,7 @@ function MainActions({ b, state, balance, setDialog }: { b: Booking; state: Book
 function MoreMenu({ b, setDialog }: { b: Booking; setDialog: (d: Dialog) => void }) {
   const { t } = useLingui();
   const voucher = useAction();
+  const confirmationPdf = useAction();
   return (
     <div className="more">
       <Menu width="target" position="bottom" shadow="md">
@@ -534,9 +542,12 @@ function MoreMenu({ b, setDialog }: { b: Booking; setDialog: (d: Dialog) => void
           ) : null}
           <Menu.Item
             style={{ minHeight: 44 }}
-            onClick={() => void voucher.run(() => api(`/bookings/${b.id}/resend-voucher`, { method: "POST" }), t`C'est fait. Confirmation renvoyée au client.`)}
+            onClick={() => void voucher.run(() => api(`/bookings/${b.id}/resend-confirmation`, { method: "POST" }), t`C'est fait. Confirmation et conditions générales renvoyées au client.`)}
           >
             <Trans>Renvoyer la confirmation au client</Trans>
+          </Menu.Item>
+          <Menu.Item style={{ minHeight: 44 }} onClick={() => void confirmationPdf.run(() => openAdminPdf(`/bookings/${b.id}/confirmation.pdf`), t`Confirmation ouverte dans un nouvel onglet.`)}>
+            <Trans>Confirmation et conditions générales (PDF)</Trans>
           </Menu.Item>
           {!isChannel(b) ? (
             <Menu.Item style={{ minHeight: 44 }} onClick={() => setDialog("edit")}>
@@ -555,6 +566,7 @@ function MoreMenu({ b, setDialog }: { b: Booking; setDialog: (d: Dialog) => void
         </Menu.Dropdown>
       </Menu>
       {voucher.state.status === "error" ? <ErrorLine text={voucher.state.text} /> : null}
+      {confirmationPdf.state.status === "error" ? <ErrorLine text={confirmationPdf.state.text} /> : null}
     </div>
   );
 }
@@ -746,33 +758,91 @@ function WriteDialog({ open, b, guest, times, onClose }: { open: boolean; b: Boo
   );
 }
 
+interface CancelPlan {
+  mode: "canal" | "sans_paiement" | "arrhes";
+  par: "locataire" | "proprietaire";
+  paidCents: number;
+  keptCents: number;
+  refundCents: number;
+  stripeRefundCents: number;
+  manualRefundCents: number;
+  indemnityCents: number;
+  note: string;
+}
+
+interface CancelResult {
+  plan: CancelPlan;
+  refunds: { status: string }[];
+}
+
 function CancelDialog({ open, b, onClose }: { open: boolean; b: Booking; onClose: () => void }) {
   const { t } = useLingui();
   const a = useAction();
   const [reason, setReason] = useState("");
+  const [par, setPar] = useState<"locataire" | "proprietaire">("locataire");
   useEffect(() => {
     if (open) {
       setReason("");
+      setPar("locataire");
       a.reset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+  // Le plan vient du serveur (simulation, rien n'est fait) : l'écran n'invente aucun montant.
+  const planQuery = useQuery({
+    queryKey: ["cancel-plan", b.id, par, b.paidCents],
+    queryFn: () => api<{ plan: CancelPlan }>(`/bookings/${b.id}/cancel`, { method: "POST", body: { par, simuler: true } }).then((r) => r.plan),
+    enabled: open && b.status !== "cancelled",
+    staleTime: 0,
+  });
+  const plan = planQuery.data;
+  const moves = plan != null && plan.mode === "arrhes";
   return (
     <Box open={open} onClose={onClose} title={t`Annuler la réservation ${b.reference}`}>
-      <p className="lead">
-        {b.paidCents > 0
-          ? t`${eur(b.paidCents)} ont déjà été payés. L'annulation libère les dates mais ne rembourse rien d'elle-même : le remboursement éventuel se fait à part.`
-          : t`L'annulation libère les dates tout de suite, ici et sur Airbnb et Booking.`}
-      </p>
+      <fieldset style={{ border: 0, padding: 0, margin: "0 0 12px" }}>
+        <legend className="lead" style={{ marginBottom: 6 }}>
+          <Trans>Qui annule ?</Trans>
+        </legend>
+        <label style={{ display: "block", marginBottom: 4 }}>
+          <input type="radio" name="cancel-par" checked={par === "locataire"} onChange={() => setPar("locataire")} /> <Trans>Le client</Trans>
+        </label>
+        <label style={{ display: "block" }}>
+          <input type="radio" name="cancel-par" checked={par === "proprietaire"} onChange={() => setPar("proprietaire")} /> <Trans>L'exploitant</Trans>
+        </label>
+      </fieldset>
+      {plan == null ? (
+        <p className="lead">{planQuery.isError ? t`Le calcul du remboursement a échoué. Réessayez.` : t`Calcul du remboursement…`}</p>
+      ) : moves ? (
+        <div className="lead" data-testid="cancel-plan">
+          {plan.par === "locataire" ? <p>{t`Arrhes conservées : ${eur(plan.keptCents)}`}</p> : null}
+          <p>{t`Remboursement : ${eur(plan.refundCents)}`}</p>
+          {plan.manualRefundCents > 0 ? <p>{t`Dont ${eur(plan.manualRefundCents)} à rendre à la main (hors Stripe).`}</p> : null}
+          {plan.indemnityCents > 0 ? <p>{t`Indemnité : ${eur(plan.indemnityCents)} (égale aux arrhes) à virer à la main. Le mail demande son IBAN au client.`}</p> : null}
+          <p>{plan.par === "locataire" ? t`Les arrhes restent acquises, le solde payé est rendu sous 14 jours sur le moyen de paiement utilisé.` : t`Tout ce qui a été payé est rendu sous 14 jours sur le moyen de paiement utilisé.`}</p>
+          <p>{t`Le client en est prévenu par mail.`}</p>
+        </div>
+      ) : (
+        <p className="lead">
+          {plan.mode === "canal" ? plan.note : t`Rien n'a été payé : rien à rembourser. L'annulation libère les dates tout de suite, ici et sur Airbnb et Booking.`}
+        </p>
+      )}
       <Textarea label={t`Motif de l'annulation`} description={t`Il reste dans l'historique de la réservation.`} autosize minRows={3} size="md" value={reason} onChange={(e) => setReason(e.currentTarget.value)} required />
       <div className="acts" style={{ marginTop: 16 }}>
         <button
           type="button"
           className="btn pri"
           style={{ background: "var(--danger)", borderColor: "var(--danger)" }}
-          disabled={a.state.status === "busy" || reason.trim().length < 3}
+          disabled={a.state.status === "busy" || reason.trim().length < 3 || plan == null}
           onClick={async () => {
-            const ok = await a.run(() => api(`/bookings/${b.id}/cancel`, { method: "POST", body: { reason: reason.trim() } }), t`C'est fait. Réservation annulée, les dates sont libres.`);
+            const ok = await a.run(
+              () => api<CancelResult>(`/bookings/${b.id}/cancel`, { method: "POST", body: { reason: reason.trim(), par, confirmer: true } }),
+              (r) => {
+                const res = r as CancelResult;
+                return res.refunds.some((x) => x.status === "failed")
+                  ? t`Réservation annulée, mais un remboursement Stripe a échoué : il est à rejouer.`
+                  : t`C'est fait. Réservation annulée, les dates sont libres.`;
+              },
+            );
             if (ok) onClose();
           }}
         >

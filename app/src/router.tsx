@@ -27,6 +27,8 @@ import { ImportPage } from "./pages/settings/Import";
 import { LogsPage } from "./pages/settings/Logs";
 import { OptionsPage } from "./pages/settings/Options";
 import { PaymentsPage } from "./pages/settings/Payments";
+import { StripeAccountsPage } from "./pages/settings/StripeAccounts";
+import { EncaissementsPage } from "./pages/settings/Encaissements";
 import { PromotionsPage } from "./pages/settings/Promotions";
 import { RegisterPage } from "./pages/settings/Register";
 import { StartupPage } from "./pages/settings/Startup";
@@ -36,6 +38,7 @@ import { TemplatesPage } from "./pages/settings/Templates";
 import { MyAccountPage } from "./pages/settings/MyAccount";
 import { DevicePage } from "./pages/settings/Device";
 import { ReviewsPage } from "./pages/Reviews";
+import { ImprovementsPage } from "./pages/settings/Improvements";
 
 export interface RootSearch {
   resa?: number;
@@ -81,6 +84,8 @@ const settingsRoutes = [
   sub("options", OptionsPage),
   sub("clients", ClientsPage),
   sub("paiements", PaymentsPage),
+  sub("stripe", StripeAccountsPage),
+  sub("encaissements", EncaissementsPage),
   sub("chiffres", StatsPage),
   sub("plateformes", ChannelsPage),
   sub("plateformes/prix", ChannelPricesPage),
@@ -93,6 +98,7 @@ const settingsRoutes = [
   sub("journaux", LogsPage),
   sub("modeles", TemplatesPage),
   sub("mon-compte", MyAccountPage),
+  sub("ameliorations", ImprovementsPage),
   sub("aide", HelpPage),
   sub("appareil", DevicePage),
 ];

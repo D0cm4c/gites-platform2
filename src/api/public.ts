@@ -14,7 +14,6 @@ import {
   cancelBooking,
   countDirectBookingPressure,
   createBookingAtomic,
-  EXPIRED_SESSION_NOTE,
   findPaymentBySession,
   getBooking,
   getBookingByReference,
@@ -35,8 +34,8 @@ import {
   listUnitPhotos,
   listUnits,
   manualBlocksInWindow,
-  markPaymentStatus,
   recordCgvAcceptance,
+  getCgvAcceptance,
   upsertGuest,
   type BookingRow,
   type UnitPhotoRow,
@@ -45,7 +44,6 @@ import {
 } from "../db/repo";
 import { pullBeds24Bookings, pushCalendars, triggerBeds24Push } from "../services/beds24-sync";
 import {
-  handlePaymentFailure,
   handlePaymentSuccess,
   MIN_CHECKOUT_CENTS,
   quoteFromContext,
@@ -54,6 +52,8 @@ import {
   type PaymentStart,
   type QuoteBody,
 } from "../services/booking-flow";
+import { buildContactAckEmail, queueEmail, realContact, refSubject } from "../services/email";
+import { buildConfirmationPdf, cgvVersionLabel, confirmationFileName, loadConfirmationPdfContext } from "../services/confirmation-pdf";
 import { publicHealth } from "../services/health";
 import { clearHoldCookie, readHoldReference, setHoldCookie } from "../services/hold-session";
 import { buildIcs, exportSpansForUnit } from "../services/ical";
@@ -62,10 +62,13 @@ import { logSearch } from "../services/search-log";
 import { getSetting } from "../services/settings";
 import {
   paymentElementEnabled,
+  stripeConfigFromEnv,
   stripeEnabled,
   stripePublishableKey,
   verifyStripeSignature,
 } from "../services/stripe";
+import { anyStripeConfigured, propertyIdOfPayment, resolveStripeConfig } from "../services/stripe-config";
+import { processStripeEvent } from "../services/stripe-webhook";
 import { turnstileSiteKey, verifyTurnstile } from "../services/turnstile";
 import { registerTaskShareRoutes } from "./tasks-public";
 
@@ -156,6 +159,8 @@ function publicPayment(start: PaymentStart) {
       returnUrl: start.returnUrl,
       amountCents: start.amountCents,
       kind: start.kind,
+      // Clé PUBLIABLE du compte Stripe de la propriété (jamais la clé secrète).
+      publishableKey: start.publishableKey,
     },
   };
 }
@@ -180,13 +185,16 @@ interface CreateBookingBody extends QuoteBody {
   turnstileToken?: string;
 }
 
-/** Version courte des CGV acceptées : sha256 hex tronqué + longueur du texte.
- *  Suffit à prouver QUEL texte était affiché au moment de l'acceptation. */
+/** Version courte des CGV acceptées : numéro de version lu dans le texte
+ *  (« v3.1+ », depuis la 3.1), puis sha256 hex tronqué + longueur du texte.
+ *  Le hash prouve QUEL texte était affiché au moment de l'acceptation, le
+ *  numéro le dit en clair (document de confirmation, fiche réservation). */
 async function cgvVersion(text: string): Promise<string> {
   if (!text.trim()) return "v0-empty";
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return `sha256:${hex.slice(0, 16)}-len${text.length}`;
+  const label = cgvVersionLabel(text);
+  return `${label ? `v${label}+` : ""}sha256:${hex.slice(0, 16)}-len${text.length}`;
 }
 
 /** Réservation encore en cours de CE visiteur, d'après son cookie signé.
@@ -219,8 +227,7 @@ async function ownPendingHold(
  *  tunnel, ni sur le voucher, ni sur les pages légales (issue #9), qui affichent
  *  alors leur repli (« via le formulaire de contact du site »). */
 export function publicContact(value: string | null | undefined): string | null {
-  const v = (value ?? "").trim();
-  return v === "" || /^TODO_/i.test(v) ? null : v;
+  return realContact(value);
 }
 
 /** Galerie publique d'un hébergement (issue #32).
@@ -964,6 +971,9 @@ export function registerPublicRoutes(router: Router): void {
     }
     const property = booking.propertyId != null ? await getProperty(db, booking.propertyId) : null;
     const settings = booking.propertyId != null ? await getSettings(db, booking.propertyId) : null;
+    // Option ouverte par le back-office : les CGV ne sont pas encore acceptées,
+    // la page voucher demande l'acceptation avant le paiement des arrhes.
+    const cgvAccepted = (await getCgvAcceptance(db, booking.id)).acceptedAt != null;
     let quoteLines: unknown = null;
     // Pourcentage d'arrhes CONTRACTUEL : celui figé dans le devis au moment de
     // la réservation (issue #75), pas la valeur courante de l'hébergement — le
@@ -1008,6 +1018,7 @@ export function registerPublicRoutes(router: Router): void {
         cautionCents: settings?.cautionCents ?? 0,
       },
       cgvText: settings?.cgvText ?? "",
+      cgvAccepted,
       // Adresse du gîte : elle n'était nulle part sur le voucher, alors que
       // c'est l'information qu'on cherche la veille du départ (issue #47-7).
       contact: {
@@ -1056,11 +1067,17 @@ export function registerPublicRoutes(router: Router): void {
   });
 
   // --- webhook Stripe ---------------------------------------------------------
-  router.post("/api/webhooks/stripe", async (req, env) => {
-    if (!stripeEnabled(env)) return apiError(400, "stripe non configuré");
-    if (!env.STRIPE_WEBHOOK_SECRET) return apiError(500, "STRIPE_WEBHOOK_SECRET manquant");
+  // Une route par propriété (un compte Stripe par entité) — cf. services/stripe-webhook.ts.
+  // La signature est vérifiée avec le secret de CETTE propriété (repli : variable
+  // d'environnement). L'ancienne route sans identifiant ne sert que le repli env.
+  const stripeWebhook = async (req: Request, env: Env, propertyId: number | null): Promise<Response> => {
+    const cfg =
+      propertyId == null ? stripeConfigFromEnv(env) : await resolveStripeConfig(env.DB, env, propertyId);
+    if (propertyId != null && !(await getProperty(env.DB, propertyId))) return apiError(404, "propriété inconnue");
+    if (!stripeEnabled(cfg)) return apiError(400, "stripe non configuré");
+    if (!cfg.webhookSecret) return apiError(500, "secret du webhook Stripe manquant");
     const payload = await req.text();
-    const valid = await verifyStripeSignature(payload, req.headers.get("stripe-signature"), env.STRIPE_WEBHOOK_SECRET);
+    const valid = await verifyStripeSignature(payload, req.headers.get("stripe-signature"), cfg.webhookSecret);
     if (!valid) return apiError(400, "signature invalide");
 
     let event: { type?: string; data?: { object?: Record<string, unknown> } };
@@ -1069,48 +1086,14 @@ export function registerPublicRoutes(router: Router): void {
     } catch {
       return apiError(400, "JSON invalide");
     }
-    const obj = event.data?.object;
-    if (event.type === "checkout.session.completed" && obj && obj.payment_status === "paid") {
-      const outcome = await handlePaymentSuccess(
-        env.DB,
-        env,
-        String(obj.id),
-        obj.payment_intent ? String(obj.payment_intent) : null,
-      );
-      // handled:false = aucun paiement ne correspond à cette session. On
-      // répond 200 (Stripe cesserait de réessayer de toute façon) mais on
-      // laisse une trace : sans elle, l'événement disparaissait sans effet.
-      if (!outcome.handled) {
-        await audit(env.DB, "stripe", "webhook.unmatched", null, { session: String(obj.id) });
-      }
-    } else if (event.type === "payment_intent.succeeded" && obj?.id) {
-      // Paiement intégré (issue #26). MÊME chemin de crédit que Checkout : la
-      // référence Stripe (`pi_…`) est écrite dans la même colonne de
-      // réconciliation, donc la même idempotence — un rejeu ne crédite rien de
-      // plus, et le contrôle de trop-perçu reste en dernier recours.
-      // C'est cette notification qui fait foi, jamais le retour navigateur :
-      // Bancontact ramène le client avec `redirect_status=processing` bien
-      // avant que la banque n'ait tranché.
-      const intentId = String(obj.id);
-      const outcome = await handlePaymentSuccess(env.DB, env, intentId, intentId);
-      if (!outcome.handled) {
-        await audit(env.DB, "stripe", "webhook.unmatched", null, { intent: intentId });
-      }
-    } else if (event.type === "payment_intent.payment_failed" && obj?.id) {
-      // Carte refusée, Bancontact abandonné : la TENTATIVE échoue, la
-      // réservation ne bouge pas. Le blocage de 30 min continue de courir et
-      // reste récupérable (formulaire ou POST /bookings/:ref/pay).
-      const err = obj.last_payment_error as { message?: unknown; code?: unknown } | undefined;
-      const reason = String(err?.code ?? err?.message ?? "").slice(0, 200) || null;
-      await handlePaymentFailure(env.DB, String(obj.id), reason);
-    } else if (event.type === "checkout.session.expired" && obj?.id) {
-      const payment = await findPaymentBySession(env.DB, String(obj.id));
-      if (payment && payment.status === "pending") {
-        await markPaymentStatus(env.DB, payment.id, "failed", { note: EXPIRED_SESSION_NOTE });
-        await audit(env.DB, "stripe", "payment.expired", `booking:${payment.bookingId}`, { session: String(obj.id) });
-      }
-    }
+    await processStripeEvent(env.DB, env, cfg, propertyId, event);
     return json({ received: true });
+  };
+  router.post("/api/webhooks/stripe", (req, env) => stripeWebhook(req, env, null));
+  router.post("/api/webhooks/stripe/:propertyId", (req, env, p) => {
+    const id = Number(p.propertyId);
+    if (!Number.isInteger(id) || id < 1) return Promise.resolve(apiError(404, "propriété inconnue"));
+    return stripeWebhook(req, env, id);
   });
 
   /** Configuration publique du paiement (issue #26).
@@ -1120,8 +1103,18 @@ export function registerPublicRoutes(router: Router): void {
    *  local reste seul à l'écran. La clé publiable est faite pour être publique
    *  (elle ne permet ni de lire ni de créer quoi que ce soit côté compte) ; la
    *  clé secrète, elle, ne sort jamais du Worker. */
-  router.get("/api/public/payment-config", async (_req, env) => {
-    const publishableKey = paymentElementEnabled(env) ? stripePublishableKey(env) : null;
+  router.get("/api/public/payment-config", async (_req, env, _p, url) => {
+    // `?property=<id|slug>` : clé publiable du compte de CETTE propriété. Sans
+    // paramètre : repli sur l'environnement. (Le tunnel reçoit de toute façon la
+    // clé avec le paiement lui-même — `payment.publishableKey` —, ce point reste
+    // pour les anciennes pages.)
+    const wanted = url.searchParams.get("property");
+    let cfg = stripeConfigFromEnv(env);
+    if (wanted) {
+      const prop = await getProperty(env.DB, /^\d+$/.test(wanted) ? Number(wanted) : wanted);
+      if (prop) cfg = await resolveStripeConfig(env.DB, env, prop.id);
+    }
+    const publishableKey = paymentElementEnabled(cfg) ? stripePublishableKey(cfg) : null;
     return publishableKey
       ? json({ enabled: true, ui: "element", publishableKey, locale: "fr" })
       : json({ enabled: false });
@@ -1129,10 +1122,13 @@ export function registerPublicRoutes(router: Router): void {
 
   // --- simulateur de paiement — MODE STUB UNIQUEMENT (pas de clé Stripe) -----
   router.get("/api/public/dev-pay/info", async (_req, env, _p, url) => {
-    if (stripeEnabled(env)) return apiError(404, "indisponible");
     const session = url.searchParams.get("session") ?? "";
     const payment = await findPaymentBySession(env.DB, session);
     if (!payment) return apiError(404, "session inconnue");
+    // Le simulateur n'existe que pour une propriété SANS compte Stripe.
+    if (stripeEnabled(await resolveStripeConfig(env.DB, env, await propertyIdOfPayment(env.DB, payment.id)))) {
+      return apiError(404, "indisponible");
+    }
     const booking = await getBooking(env.DB, payment.bookingId);
     return json({
       session,
@@ -1147,10 +1143,13 @@ export function registerPublicRoutes(router: Router): void {
   });
 
   router.post("/api/public/dev-pay/confirm", async (req, env) => {
-    if (stripeEnabled(env)) return apiError(404, "indisponible");
     const body = await readJson<{ session?: string }>(req);
     const session = String(body?.session ?? "");
     if (!session.startsWith("stub_")) return apiError(400, "session invalide");
+    const stubbed = await findPaymentBySession(env.DB, session);
+    if (stubbed && stripeEnabled(await resolveStripeConfig(env.DB, env, await propertyIdOfPayment(env.DB, stubbed.id)))) {
+      return apiError(404, "indisponible");
+    }
     // Le `kind` se lit AVANT le traitement : après, un rejeu tomberait sur la
     // sortie idempotente et on ne saurait plus vers quelle page renvoyer.
     const before = await findPaymentBySession(env.DB, session);
@@ -1172,7 +1171,7 @@ export function registerPublicRoutes(router: Router): void {
   /** Question AVANT réservation (formulaire de la page publique). */
   router.post("/api/public/contact", async (req, env) => {
     const db = env.DB;
-    const body = await readJson<{ property?: string; name?: string; email?: string; message?: string; website?: string }>(req);
+    const body = await readJson<{ property?: string; name?: string; email?: string; message?: string; website?: string; lang?: string }>(req);
     if (!body) return apiError(400, "corps JSON attendu");
     if (String(body.website ?? "").trim() !== "") return json({ ok: true }); // pot de miel anti-bot
     const name = String(body.name ?? "").trim();
@@ -1194,9 +1193,39 @@ export function registerPublicRoutes(router: Router): void {
       bodyText: message,
       guestId: guest?.id ?? null,
     });
-    await audit(db, "public", "message.contact", `message:${id}`, { property: property.slug, from: email });
-    return json({ ok: true }, 201);
+    if (id === null) return apiError(500, "message non enregistré");
+    // Référence de la question, du même gabarit que celle d'une réservation :
+    // elle va dans l'objet, et la relève de la boîte y rattache la réponse.
+    const reference = `QU-${todayInZone().slice(0, 4)}-${String(id).padStart(4, "0")}`;
+    await db.prepare("UPDATE messages SET subject = ?1 WHERE id = ?2").bind(refSubject(reference, `Question de ${name} — ${property.name}`), id).run();
+    await audit(db, "public", "message.contact", `message:${id}`, { property: property.slug, from: email, reference });
+    const ack = await sendContactAck(db, env, { email, reference, property, name, message, lang: body.lang === "nl" ? "nl" : "fr" });
+    return json({ ok: true, reference, ackSent: ack, deliveredTo: publicContact(property.contactEmail) }, 201);
   });
+
+  /** Accusé de réception par e-mail, journalisé comme les autres (`contact_ack`).
+   *  Garde-fou : l'adresse saisie n'est pas vérifiée, le formulaire ne doit pas
+   *  servir à arroser quelqu'un de mails — au-delà de 3 messages par heure et
+   *  par adresse, le message est gardé mais l'accusé ne repart plus. */
+  async function sendContactAck(
+    db: D1Database,
+    env: Env,
+    a: { email: string; reference: string; property: { id: number; name: string }; name: string; message: string; lang: "fr" | "nl"; bookingId?: number | null },
+  ): Promise<boolean> {
+    try {
+      const recent = await db
+        .prepare("SELECT COUNT(*) AS n FROM messages WHERE direction = 'in' AND channel = 'form' AND lower(from_email) = ?1 AND received_at >= datetime('now', '-1 hour')")
+        .bind(a.email.toLowerCase())
+        .first<{ n: number }>();
+      if ((recent?.n ?? 0) > 3) return false;
+      const mail = buildContactAckEmail({ reference: a.reference, propertyName: a.property.name, guestName: a.name, message: a.message, nl: a.lang === "nl" });
+      await queueEmail(db, env, { bookingId: a.bookingId ?? null, to: a.email, subject: mail.subject, bodyText: mail.bodyText, kind: "contact_ack" });
+      return true;
+    } catch (e) {
+      await audit(db, "public", "contact_ack.error", a.reference, { error: e instanceof Error ? e.message : String(e) });
+      return false;
+    }
+  }
 
   /** Charge une résa par référence + email — mutualisé messages/voucher. */
   async function authedBooking(db: D1Database, reference: string, email: string): Promise<BookingRow | null> {
@@ -1231,7 +1260,7 @@ export function registerPublicRoutes(router: Router): void {
    *  ouvrir une nouvelle. */
   router.post("/api/public/bookings/:reference/pay", async (req, env, p) => {
     const db = env.DB;
-    const body = await readJson<{ email?: string }>(req);
+    const body = await readJson<{ email?: string; cgvAccepted?: boolean }>(req);
     const booking = await authedBooking(db, p.reference ?? "", String(body?.email ?? "").trim());
     if (!booking) return apiError(404, "réservation introuvable");
 
@@ -1249,6 +1278,20 @@ export function registerPublicRoutes(router: Router): void {
     if (!booking.holdExpiresAt || booking.holdExpiresAt <= sqlNow()) {
       return apiError(410, "l'option a expiré — le créneau est de nouveau ouvert, relancez une réservation");
     }
+    // Option ouverte par le back-office : le client n'a pas encore accepté les
+    // CGV (le tunnel public le fait à la création). La réservation est conclue
+    // par cette acceptation et le paiement des arrhes : version, heure et IP sont
+    // enregistrées ici, comme dans le tunnel, et la case seule ne suffit pas.
+    if ((await getCgvAcceptance(db, booking.id)).acceptedAt == null) {
+      if (body?.cgvAccepted !== true) {
+        return apiError(400, "acceptation des conditions générales requise", { code: "cgv_required" });
+      }
+      const settings = booking.propertyId != null ? await getSettings(db, booking.propertyId) : null;
+      await recordCgvAcceptance(db, booking.id, {
+        version: await cgvVersion(settings?.cgvText ?? ""),
+        ip: req.headers.get("cf-connecting-ip"),
+      });
+    }
     const kind = booking.balanceDueDate == null ? "full" : "deposit";
     const start = await startPayment(db, env, booking, kind, booking.depositCents, "public");
     return json({
@@ -1259,6 +1302,28 @@ export function registerPublicRoutes(router: Router): void {
       now: sqlNow(),
     });
   });
+
+  /** « Confirmation de réservation et conditions générales » en PDF, pour le
+   *  client : même contrôle que sa page de réservation (référence + email), et
+   *  seulement une fois la réservation confirmée (avant, ni le prix ni les
+   *  dates ne sont définitifs). `contrat.pdf` est l'ancien nom, gardé en alias
+   *  pour les liens déjà envoyés : même réponse. */
+  const confirmationPdf: Parameters<typeof router.get>[1] = async (_req, env, p, url) => {
+    const email = (url.searchParams.get("email") ?? "").trim();
+    const booking = await authedBooking(env.DB, p.reference ?? "", email);
+    if (!booking || booking.status !== "confirmed") return apiError(404, "confirmation introuvable");
+    const ctx = await loadConfirmationPdfContext(env.DB, booking.id);
+    if (!ctx) return apiError(404, "confirmation introuvable");
+    return new Response(buildConfirmationPdf(ctx), {
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": `inline; filename="${confirmationFileName(booking.reference)}"`,
+        "cache-control": "private, no-store",
+      },
+    });
+  };
+  router.get("/api/public/bookings/:reference/confirmation.pdf", confirmationPdf);
+  router.get("/api/public/bookings/:reference/contrat.pdf", confirmationPdf);
 
   /** Fil de conversation du client (page voucher). */
   router.get("/api/public/bookings/:reference/messages", async (_req, env, p, url) => {
@@ -1289,8 +1354,20 @@ export function registerPublicRoutes(router: Router): void {
       guestId: booking.guestId,
     });
     await audit(db, "public", "message.booking", `booking:${booking.id}`);
+    const property = booking.propertyId != null ? await getProperty(db, booking.propertyId) : null;
+    const ackSent = booking.guestEmail
+      ? await sendContactAck(db, env, {
+          email: booking.guestEmail,
+          reference: booking.reference,
+          property: { id: property?.id ?? booking.propertyId ?? 1, name: property?.name ?? "" },
+          name: booking.guestName ?? "",
+          message,
+          lang: booking.guestLang === "nl" ? "nl" : "fr",
+          bookingId: booking.id,
+        })
+      : false;
     const thread = await getThread(db, { bookingId: booking.id, guestId: booking.guestId });
-    return json({ ok: true, messages: thread.map(publicMessage) }, 201);
+    return json({ ok: true, ackSent, reference: booking.reference, deliveredTo: publicContact(property?.contactEmail), messages: thread.map(publicMessage) }, 201);
   });
 
   // petite aide au front public : date du jour (Bruxelles) + mode démo
@@ -1298,7 +1375,7 @@ export function registerPublicRoutes(router: Router): void {
     json({
       today: todayInZone(),
       maxAdvanceDays: MAX_ADVANCE_DAYS,
-      demo: !stripeEnabled(env),
+      demo: !(await anyStripeConfigured(env.DB, env)),
       // Clé PUBLIQUE du widget anti-robot, ou null quand la fonctionnalité est
       // éteinte (issue #6) : le tunnel ne charge alors AUCUN script tiers.
       turnstileSiteKey: turnstileSiteKey(env),

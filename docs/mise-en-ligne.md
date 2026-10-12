@@ -1,5 +1,9 @@
 # Mise en ligne : ce qui reste avant la bascule complète
 
+> Depuis le 11/10/2026 la production est sur Hetzner (voir docs/hebergement-hetzner.md) ;
+> dev1.mdcdy.be reste en lecture comme retour arrière une semaine, puis s'éteint.
+
+
 Décision de Julien du 10/10/2026 : **une seule version**. La production est le
 site Node.js chez Infomaniak, `https://dev1.mdcdy.be` (hébergement web de
 Matthieu, clone de `main` de `Almarcegui/gites-platform`). Cloudflare s'éteint.
@@ -8,6 +12,11 @@ Nous n'avons pas d'accès SSH : tout passe par HTTPS, GitHub et le Manager.
 État au 10/10/2026 (lu par la sonde, sans rien écrire) : le site répond
 (`/api/public/health` → `ok: true`), mais **le traitement planifié n'a jamais
 tourné** (`lastCronAt: null`) — le Planificateur n'est pas posé.
+
+> **Décision du 11/10/2026 : la production quitte Infomaniak pour un serveur Hetzner**
+> administré par Claude, avec déploiement automatique au merge. La marche à suivre vit dans
+> [`hebergement-hetzner.md`](hebergement-hetzner.md) ; les sections 1 (Manager Infomaniak) et
+> 3 (domaine) ci-dessous ne valent que tant que dev1 reste la production.
 
 Chaque case se coche à la main ; les gestes marqués **Julien** ou **Matthieu**
 ne peuvent pas être faits depuis le dépôt.
@@ -132,10 +141,11 @@ et les anciennes adresses d'écran (`#/dash`, `#/cal`, `#/resa`, `#/canaux`,
 
 ## 6. Stripe
 
-- [ ] **Julien** — le compte Stripe de l'exploitant (décision du 18/07), clés
-      live `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY` dans le Manager.
-- [ ] Endpoint de webhook Stripe vers `https://<domaine>/api/webhooks/stripe`,
-      secret `STRIPE_WEBHOOK_SECRET`.
+- [ ] **Julien** — un compte Stripe par entité qui encaisse (décision du 11/10), clés
+      collées dans Réglages > Comptes Stripe (`docs/paiements-stripe.md`) ;
+      `STRIPE_SECRET_KEY` et `STRIPE_PUBLISHABLE_KEY` d'environnement ne sont qu'un repli.
+- [ ] Un endpoint de webhook Stripe PAR PROPRIÉTÉ, `https://<domaine>/api/webhooks/stripe/<id de la propriété>` (adresse affichée dans Réglages > Comptes Stripe ; voir `docs/paiements-stripe.md`),
+      son secret `whsec_…` se colle dans le même écran.
 - [ ] Turnstile (anti-robot) : `TURNSTILE_SITE_KEY` et `TURNSTILE_SECRET_KEY`
       pour le domaine définitif (le serveur Node les transmet depuis le 10/10).
 
@@ -158,3 +168,33 @@ Dans cet ordre, sur le go de Julien :
       l'alias `--cible prod` de `scripts/sauvegarde_nuit.py`, et ce qui reste
       de `wrangler` pour la production ;
 - [ ] archiver (pas supprimer) les sauvegardes `*-gites-platform.sql`.
+
+## Déployer dev1 en une commande (procédure vérifiée le 11/10/2026)
+
+Infomaniak refuse encore les clés SSH (« Private key authentication is
+currently unavailable ») : une seule saisie de mot de passe par Julien, puis
+tout s'enchaîne. La connexion est partagée (`ControlMaster`) et reste ouverte
+une heure : Claude peut ensuite relancer des commandes sur le serveur sans
+nouveau mot de passe.
+
+```bash
+ssh -t -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+  -o ControlMaster=auto -o ControlPath=~/.ssh/cm-gites -o ControlPersist=3600 \
+  Mb73XkJ5j1i_claudejuju@57-114997.ssh.hosting-ik.com \
+  'cd /srv/customer/sites/dev1.mdcdy.be && git pull --ff-only && npm ci && npm run build && git log --oneline -1'
+```
+
+- Durée constatée : 5 min pour le serveur, **jusqu'à 1 h pour l'écran**
+  (`vite build` bridé par Infomaniak en SSH). Le site reste servi pendant ce temps ;
+  `/admin/` bascule sur le nouveau build dès que `public/admin/` est réécrit.
+- Si la commande se termine sur `(END)`, c'est le pager de `git log` : touche `q`.
+- Ensuite, commandes à la demande sans mot de passe tant que la connexion vit :
+  `ssh -o ControlPath=~/.ssh/cm-gites Mb73XkJ5j1i_claudejuju@57-114997.ssh.hosting-ik.com '<commande>' < /dev/null`
+  (une session sur deux rend parfois une sortie vide : réessayer).
+- **Le processus Node ne tourne pas dans le conteneur SSH** (`ps` ne le voit pas) :
+  le redémarrage, qui applique les migrations et recharge `.env`, passe
+  obligatoirement par le Manager → Hébergement web → site Node.js
+  `dev1.mdcdy.be` → Redémarrer. Session Manager = Matthieu ou Julien ; Claude peut
+  cliquer le bouton depuis une session déjà ouverte dans le Chrome de Julien.
+- Contrôle après redémarrage : `GET /api/admin/ical` doit renvoyer le champ
+  `departureDayIncluded` (migration 0029 appliquée) ; `node/verify-deploy.mjs https://dev1.mdcdy.be`.

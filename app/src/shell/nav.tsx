@@ -3,7 +3,7 @@
 import { useLingui } from "@lingui/react/macro";
 import {
   IconAdjustmentsHorizontal, IconBook2, IconBrush, IconCalendar, IconCalendarShare, IconChartBar, IconCreditCard,
-  IconDeviceDesktop, IconDiscount, IconHelpCircle, IconHome2, IconKey, IconList, IconListCheck, IconMessage,
+  IconDeviceDesktop, IconDiscount, IconHelpCircle, IconHome2, IconKey, IconMessageDots, IconList, IconListCheck, IconMessage,
   IconPlugConnected, IconRosetteDiscount, IconSparkles, IconStar, IconSun, IconTemplate, IconTicket, IconUserCircle, IconUsers,
 } from "@tabler/icons-react";
 import type { ReactNode } from "react";
@@ -13,7 +13,7 @@ export interface NavEntry {
   label: string;
   icon: ReactNode;
   /** compteur affiché à côté (messages non lus, ménages du jour) */
-  badge?: "unread" | "cleaning";
+  badge?: "unread" | "cleaning" | "improvements";
   /** la page couvre aussi ses sous-adresses (Beds24 et canaux → /reglages/plateformes/…) */
   exact?: boolean;
 }
@@ -78,6 +78,7 @@ export function useNav(): NavSection[] {
         { to: "/reglages/appareil", label: t`Cet appareil`, icon: <IconDeviceDesktop size={I} /> },
         { to: "/reglages/mise-en-route", label: t`Mise en route`, icon: <IconListCheck size={I} /> },
         { to: "/reglages/journaux", label: t`Journaux`, icon: <IconBook2 size={I} /> },
+        { to: "/reglages/ameliorations", label: t`Améliorations`, icon: <IconMessageDots size={I} />, badge: "improvements" },
         { to: "/reglages/aide", label: t`Aide`, icon: <IconHelpCircle size={I} /> },
         { to: "/reglages", label: t`Tous les réglages`, icon: <IconAdjustmentsHorizontal size={I} />, exact: true },
       ],

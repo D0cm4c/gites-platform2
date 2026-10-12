@@ -193,8 +193,10 @@ describe("PaymentIntent — création côté serveur", () => {
     // discipline EMAILS_ENABLED (contre-review Gemini 2026-08-30).
     expect(body.get("metadata[guest_email]")).toBe(GUEST.email);
     expect(body.get("receipt_email")).toBeNull();
-    // Carte (qui porte Apple Pay / Google Pay) ET Bancontact, explicitement.
-    expect(PAYMENT_METHOD_TYPES.map((_, i) => body.get(`payment_method_types[${i}]`))).toEqual(["card", "bancontact"]);
+    // Carte et Bancontact se règlent dans le tableau de bord Stripe (API 2026-09-30) :
+    // le paramètre `payment_method_types` est refusé par Stripe, il ne part plus.
+    expect(PAYMENT_METHOD_TYPES).toEqual(["card", "bancontact"]);
+    expect(body.get("payment_method_types[0]")).toBeNull();
     // Idempotence : réservation + étape + montant.
     const idem = intents[0]!.headers.get("idempotency-key") ?? "";
     expect(idem).toContain(reference);
@@ -256,7 +258,7 @@ describe("webhook payment_intent — la notification serveur fait foi", () => {
     expect(twice.paidCents).toBe(amountDue);
 
     const emails = (await call("GET", "/api/admin/email-log")).data.emails as { kind: string }[];
-    expect(emails.filter((e) => e.kind === "voucher")).toHaveLength(1);
+    expect(emails.filter((e) => e.kind === "confirmation")).toHaveLength(1);
     expect(emails.filter((e) => e.kind === "payment_receipt")).toHaveLength(1);
   });
 

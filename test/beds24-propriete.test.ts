@@ -20,6 +20,22 @@ let t: TestDb;
 let env: Env;
 const ADMIN_HEADER = { authorization: "Bearer test-admin-token" };
 const NOM = "Les Gîtes du Pré Moré";
+// Saisies manuelles Beds24 des 10–11/10/2026 : référence exacte de la charge utile.
+const FEATURES_PROPRIETE = [["WIFI", "PARKING_INCLUDED", "PETS_CONSIDERED", "SMOKING_NOT_ALLOWED", "KITCHEN", "DISHES_UTENSILS", "DISHWASHER", "REFRIGERATOR", "TV", "STEREO"]];
+const FEATURES_SCIEUR = [
+  ["KITCHEN", "DINING_TABLE", "LIVING_ROOM", "HEATING", "FIRE_PIT", "PETS_CONSIDERED", "WIFI", "PARKING_INCLUDED", "SMOKING_NOT_ALLOWED", "DISHES_UTENSILS", "DISHWASHER", "REFRIGERATOR", "TV", "STEREO"],
+  [],
+  ["BATHROOM_SHOWER", "BATH_SHOWER"], ["BATHROOM_SHOWER", "BATH_SHOWER"], ["BATHROOM"],
+  ["BEDROOM", "BED_DOUBLE"], ["BEDROOM", "BED_DOUBLE"], ["BEDROOM", "BED_DOUBLE"],
+  ["BEDROOM", "BED_SINGLE", "BED_SINGLE", "BED_SINGLE", "BED_SINGLE"], ["BEDROOM", "BED_SINGLE"],
+];
+const FEATURES_SCIERIE = [
+  ["KITCHEN", "LIVING_ROOM", "FIREPLACE", "HEATING", "WATER_VIEW", "PETS_CONSIDERED", "WIFI", "PARKING_INCLUDED", "SMOKING_NOT_ALLOWED", "DISHES_UTENSILS", "DISHWASHER", "REFRIGERATOR", "TV", "STEREO"],
+  [],
+  ["BATHROOM"], ["BATHROOM_SHOWER", "BATH_SHOWER"],
+  ["BEDROOM", "BED_DOUBLE"], ["BEDROOM", "BED_DOUBLE"],
+  ["BEDROOM", "BED_SINGLE", "BED_SINGLE", "BED_SINGLE", "BED_SINGLE"],
+];
 
 interface FakeRoom { id: number; name: string; [k: string]: unknown }
 interface FakeProperty { id: number; name: string; roomTypes: FakeRoom[]; [k: string]: unknown }
@@ -98,7 +114,9 @@ const PROPERTY_TYPES = new Set(["apartment", "cottage", "house", "villa", "chale
 const ROOM_TYPES = new Set(["holidayHome", "villa", "chalet", "apartment", "studio"]);
 const FEATURE_CODES = new Set([
   "KITCHEN", "DINING_TABLE", "LIVING_ROOM", "HEATING", "FIRE_PIT", "FIREPLACE", "WATER_VIEW", "PETS_CONSIDERED",
-  "WIFI", "PARKING", "SAUNA", "GARDEN", "OVEN", "WASHER", "DISHWASHER", "INTERNET", "BEDROOM", "BED_DOUBLE",
+  "WIFI", "PARKING", "PARKING_INCLUDED", "SMOKING_NOT_ALLOWED", "DISHES_UTENSILS", "REFRIGERATOR", "TV", "STEREO",
+  "SAUNA", "GARDEN", "OVEN", "WASHER", "DISHWASHER", "INTERNET", "BEDROOM", "BED_DOUBLE", "BED_SINGLE",
+  "BATHROOM", "BATHROOM_SHOWER", "BATH_SHOWER",
 ]);
 const QUARTER = /^(([01]\d|2[0-3]):(00|15|30|45)|24:00)$/;
 function validate(body: Record<string, unknown>[]): string[] {
@@ -107,6 +125,7 @@ function validate(body: Record<string, unknown>[]): string[] {
     if (p.propertyType != null && !PROPERTY_TYPES.has(String(p.propertyType))) out.push(`propertyType ${String(p.propertyType)}`);
     if (p.country != null && String(p.country).length > 2) out.push("country maxLength 2");
     for (const k of ["checkInStart", "checkOutEnd"]) if (p[k] != null && !QUARTER.test(String(p[k]))) out.push(k);
+    for (const line of (p.featureCodes as string[][]) ?? []) for (const c of line) if (!FEATURE_CODES.has(c)) out.push(`featureCode inconnu ${c}`);
     for (const r of (p.roomTypes as Record<string, unknown>[]) ?? []) {
       if (r.roomType != null && !ROOM_TYPES.has(String(r.roomType))) out.push(`roomType ${String(r.roomType)}`);
       if (r.qty != null && (Number(r.qty) < 1 || Number(r.qty) > 99)) out.push("qty");
@@ -190,13 +209,16 @@ describe("plan de création (lecture de notre base)", () => {
     expect(plan.rooms[1]).toMatchObject({ maxPeople: 8, minStay: 2, rackRate: 120, cleaningFee: 90 });
     expect(plan.rooms[0]!.description).toContain("cuisinière de restaurant");
     expect(plan.rooms[1]!.description).toContain("feu ouvert");
-    expect(plan.rooms[1]!.featureCodes).toContain("FIREPLACE");
-    // rien d'affirmé que nos textes ne disent pas, rien de payant compté comme inclus
-    for (const r of plan.rooms) {
-      expect(r.featureCodes).not.toContain("WIFI");
-      expect(r.featureCodes).not.toContain("PARKING");
-      expect(r.featureCodes).not.toContain("SAUNA");
-    }
+    // charge utile = saisies manuelles Beds24 (10–11/10/2026), ligne par ligne
+    expect(plan.featureCodes).toEqual(FEATURES_PROPRIETE);
+    expect(plan.rooms[0]!.featureCodes).toEqual(FEATURES_SCIEUR);
+    expect(plan.rooms[1]!.featureCodes).toEqual(FEATURES_SCIERIE);
+    expect(plan.rooms[1]!.maxPeople).toBe(8);
+    expect(plan.rooms[0]!.description).toContain("Home cinéma avec projecteur et système son.");
+    expect(plan.rooms[0]!.description).toContain("Matelas d'appoint possible sur demande.");
+    expect(plan.rooms[1]!.description).toContain("Home cinéma avec projecteur et système son.");
+    // rien de payant compté comme inclus
+    for (const r of plan.rooms) expect(r.featureCodes.flat()).not.toContain("SAUNA");
     // 8 photos par maison, dans l'ordre, en URL publiques
     expect(plan.rooms[0]!.photos).toHaveLength(8);
     expect(plan.rooms[0]!.photos[0]!.url).toBe("https://gites.example/img/gites/maison-du-scieur/facade.jpg");
@@ -319,7 +341,11 @@ describe("POST /api/admin/beds24/creer-propriete", () => {
     const enrichRooms = enrich.roomTypes as { id: number; texts: { roomDescription: string }[]; featureCodes: string[][] }[];
     expect(enrichRooms.map((x) => x.id)).toEqual(created.roomTypes.map((x) => x.id));
     expect(enrichRooms[0]!.texts[0]!.roomDescription).toContain("quatre chambres");
-    expect(enrichRooms[0]!.featureCodes[0]).toContain("KITCHEN");
+    expect(enrichRooms[0]!.featureCodes).toEqual(FEATURES_SCIEUR);
+    expect(enrichRooms[1]!.featureCodes).toEqual(FEATURES_SCIERIE);
+    expect(enrichRooms[0]!.texts[0]!.roomDescription).toContain("Home cinéma avec projecteur et système son.");
+    expect(enrich.featureCodes).toEqual(FEATURES_PROPRIETE);
+    expect(coreRooms.map((x) => x.maxPeople)).toEqual([11, 8]);
 
     expect(r.propriete).toEqual({ beds24PropertyId: created.id, name: created.name, creee: true });
     expect(r.rooms.every((x) => x.creee)).toBe(true);
@@ -328,7 +354,7 @@ describe("POST /api/admin/beds24/creer-propriete", () => {
     expect(r.envoye.rooms[0]!.champs).toContain("ménage 120 EUR");
     expect(r.aCompleter.rooms[0]!.photos).toHaveLength(8);
     expect(r.aCompleter.rooms[0]!.photos[0]!.url).toMatch(/^https:\/\/gites\.example\/img\/gites\//);
-    expect(r.aCompleter.propriete.join(" ")).toMatch(/Wi-Fi/);
+    expect(r.aCompleter.propriete.join(" ")).toMatch(/GPS/);
     expect(await mapping()).toEqual({ property: created.id, rooms: [created.roomTypes[0]!.id, created.roomTypes[1]!.id, null] });
 
     const log = await t.db

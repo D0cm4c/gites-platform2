@@ -1,0 +1,31 @@
+# Rôle : le site des gîtes (Node 22 + SQLite) sous systemd.
+# Usage : installé en /etc/systemd/system/gites.service par installer.sh ; redémarré par deploy.sh.
+[Unit]
+Description=Site des gîtes (Node)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gites
+Group=gites
+WorkingDirectory=/srv/gites/app
+EnvironmentFile=/srv/gites/.env
+ExecStart=/usr/bin/node node/server.mjs
+Restart=always
+RestartSec=3
+# Un seul processus : la base SQLite et le verrou de réservation n'en supportent qu'un.
+
+# Durcissement : le processus web n'écrit que dans /srv/gites/data (base et photos) ;
+# il ne peut modifier ni le code, ni deploy.sh, ni les sauvegardes, même s'il était compromis.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/gites/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,61 @@
+# Déploiement automatique sur le serveur Hetzner : un merge sur main, une fois le workflow « CI »
+# vert, met le site à jour (code, build, redémarrage, migrations, sonde). Voir docs/hebergement-hetzner.md.
+#
+# Secrets du dépôt (Settings > Secrets and variables > Actions) :
+#   DEPLOY_HOST        adresse ou nom du serveur
+#   DEPLOY_USER        « gites »
+#   DEPLOY_SSH_KEY     clé PRIVÉE de déploiement (celle dont la clé publique est dans cloud-init :
+#                      elle ne peut lancer que /srv/gites/deploy.sh)
+#   DEPLOY_KNOWN_HOSTS ligne known_hosts du serveur (OBLIGATOIRE : pas de confiance au premier
+#                      contact depuis GitHub) ; installer.sh la pose depuis la clé de l'hôte.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+# Un seul déploiement à la fois ; le suivant attend (deploy.sh a aussi son verrou).
+concurrency:
+  group: deploy-hetzner
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # Après CI : seulement s'il a réussi, et pour un push sur main (pas une PR).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Préparer SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_HOST" -a -n "$DEPLOY_SSH_KEY" -a -n "$DEPLOY_KNOWN_HOSTS" || { echo "Secrets DEPLOY_HOST / DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS manquants"; exit 1; }
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      # La clé de déploiement est liée à /srv/gites/deploy.sh côté serveur (authorized_keys) ;
+      # le serveur ne retient de la commande que le SHA de 40 caractères hexadécimaux.
+      - name: Déployer
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          # Le commit validé par CI (workflow_run), sinon rien : le serveur prend alors origin/main.
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 \
+            "${DEPLOY_USER:-gites}@${DEPLOY_HOST}" "/srv/gites/deploy.sh ${SHA}"

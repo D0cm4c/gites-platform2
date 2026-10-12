@@ -6,6 +6,8 @@ interface Env {
   EMAILS_ENABLED?: string;
   // Secrets (.dev.vars en local, wrangler secret en prod) — tous optionnels :
   // absents = mode stub (paiement simulé, emails journalisés uniquement).
+  // Clés Stripe de REPLI : un compte Stripe par propriété (table property_stripe,
+  // Réglages > Comptes Stripe). Ces variables ne servent qu'aux propriétés sans clés propres.
   STRIPE_SECRET_KEY?: string;
   /** Clé publique Stripe (pk_test_… / pk_live_…) — confiée au navigateur pour
    *  monter le Payment Element. Absente = repli sur Checkout hébergé. */
@@ -42,7 +44,25 @@ interface Env {
   MAIL_FROM?: string;
   /** Transport SMTP injecté par node/server.mjs (node:net/node:tls, absent sur
    *  Workers, dont le runtime n'ouvre pas de socket SMTP sortante). */
-  SMTP_SEND?: (mail: { to: string; subject: string; text: string }) => Promise<{ id: string }>;
+  SMTP_SEND?: (mail: {
+    to: string;
+    subject: string;
+    text: string;
+    html?: string;
+    inReplyTo?: string | null;
+    references?: string | null;
+    attachments?: { filename: string; contentType: string; content: Uint8Array }[];
+  }) => Promise<{ id: string }>;
+  /** Relève de la boîte de contact (IMAP, Gmail « mot de passe d'application ») : actif quand
+   *  IMAP_USER et un mot de passe (IMAP_PASSWORD, sinon SMTP_PASSWORD) sont posés et que
+   *  node/server.mjs a fourni IMAP_FETCH. Sur Workers : relève désactivée (pas de socket). */
+  IMAP_HOST?: string;
+  /** 993 (TLS direct, le seul mode accepté). */
+  IMAP_PORT?: string;
+  IMAP_USER?: string;
+  IMAP_PASSWORD?: string;
+  /** Client IMAP injecté par node/server.mjs (node:tls) ; absent sur Workers. */
+  IMAP_FETCH?: (query: ImapQuery) => Promise<ImapBatch>;
   /** Instantané complet de la base SQLite (VACUUM INTO), injecté par
    *  node/server.mjs ; absent sur Workers (export SQL à la place). */
   SQLITE_SNAPSHOT?: () => Promise<Uint8Array>;
@@ -66,4 +86,27 @@ interface UploadStore {
   list?(): Promise<string[]>;
   /** Contenu et date (secondes Unix) d'un fichier déposé. */
   read?(name: string): Promise<{ bytes: Uint8Array; mtime: number }>;
+}
+
+/** Demande de relève IMAP (node/imap.mjs : fetchNewMail). */
+interface ImapQuery {
+  uidValidity: number | null;
+  lastUid: number | null;
+  /** Fenêtre du premier passage (ou d'une boîte reconstruite), en jours. */
+  sinceDays: number;
+  /** Nombre de mails au plus par appel. */
+  max: number;
+  /** Octets au plus par mail (le reste n'est pas descendu). */
+  maxBytes?: number;
+}
+
+interface ImapBatch {
+  uidValidity: number;
+  mails: { uid: number; raw: string; size: number; truncated: boolean }[];
+  /** Il reste des mails au-delà de ce lot. */
+  more: boolean;
+  /** Plus grand UID examiné dans ce lot (ceux sans corps compris). */
+  highestUid: number | null;
+  /** UID examinés dans ce lot, du plus ancien au plus récent. */
+  batchUids?: number[];
 }

@@ -54,7 +54,25 @@ describe("fiche réservation", () => {
     expect(go).toBeDisabled();
     await user.type(within(box).getByLabelText(/Motif/), "Client malade");
     await user.click(go);
-    await waitFor(() => expect(calls.find((c) => c.path === "/bookings/7/cancel")?.body).toEqual({ reason: "Client malade" }));
+    await waitFor(() => expect(calls.find((c) => c.path === "/bookings/7/cancel" && !(c.body as { simuler?: boolean } | undefined)?.simuler)?.body).toEqual({ reason: "Client malade", par: "locataire", confirmer: true }));
+  });
+
+  it("annuler : le plan change selon qui annule, et le serveur reçoit « par »", async () => {
+    const user = userEvent.setup();
+    const { calls } = renderApp("/calendrier?resa=7");
+    await user.click(await screen.findByRole("button", { name: /^Plus$/ }));
+    await user.click(await screen.findByRole("menuitem", { name: "Annuler la réservation" }));
+    const box = await screen.findByRole("dialog", { name: /Annuler la réservation PM-2026-007/ });
+    expect(await within(box).findByText(/Arrhes conservées : 300 €/)).toBeInTheDocument();
+    expect(within(box).getByText(/Remboursement : 700 €/)).toBeInTheDocument();
+    await user.click(within(box).getByLabelText("L'exploitant"));
+    expect(await within(box).findByText(/Remboursement : 1 000 €/)).toBeInTheDocument();
+    expect(within(box).getByText(/Indemnité : 300 € \(égale aux arrhes\) à virer à la main/)).toBeInTheDocument();
+    expect(within(box).queryByText(/double/)).toBeNull();
+    expect(within(box).queryByText(/Arrhes conservées/)).toBeNull();
+    await user.type(within(box).getByLabelText(/Motif/), "Travaux");
+    await user.click(within(box).getByRole("button", { name: "Annuler la réservation" }));
+    await waitFor(() => expect(calls.find((c) => c.path === "/bookings/7/cancel" && !(c.body as { simuler?: boolean } | undefined)?.simuler)?.body).toEqual({ reason: "Travaux", par: "proprietaire", confirmer: true }));
   });
 
   it("encaisser : le montant proposé est le solde, la boîte envoie le paiement", async () => {

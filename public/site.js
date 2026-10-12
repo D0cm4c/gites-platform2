@@ -140,7 +140,7 @@ function wireContact() {
     e.preventDefault();
     const note = $("cNote");
     try {
-      await api("/api/public/contact", {
+      const r = await api("/api/public/contact", {
         property: PROPERTY,
         name: $("cName").value,
         email: $("cEmail").value,
@@ -148,7 +148,15 @@ function wireContact() {
         website: $("cWebsite").value, // pot de miel anti-bot
       });
       note.style.display = "block";
-      note.textContent = "✅ Message bien reçu — nous vous répondons rapidement par email.";
+      note.style.background = "";
+      note.style.color = "";
+      // textContent : le message du client est repris à l'écran tel quel, sans HTML.
+      const mail = $("cEmail").value.trim();
+      note.textContent =
+        `✅ Message envoyé à l'équipe des gîtes${r.deliveredTo ? ` (${r.deliveredTo})` : ""}` +
+        `${r.reference ? ` — référence ${r.reference}` : ""}.\n` +
+        `${r.ackSent ? `Un e-mail de confirmation, qui reprend votre message, vous est envoyé à l'instant à ${mail}. ` : ""}` +
+        `Nous vous répondons par e-mail, à la même adresse.\n\nVotre message : « ${$("cMsg").value.trim()} »`;
       $("cMsg").value = "";
     } catch (err) {
       note.style.display = "block";

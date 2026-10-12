@@ -31,7 +31,7 @@ VITEST := node_modules/.bin/vitest
 MARQUE_CHECK := .wrangler/check-ok
 PORT ?= 8788
 
-.PHONY: installer dev test check sauvegarde sauvegarde-cloudflare livrer livrer-essai livrer-cloudflare sonde-prod sonde-essai sonde-cloudflare installer-sonde _outils
+.PHONY: installer dev test check sauvegarde sauvegarde-cloudflare livrer livrer-essai livrer-cloudflare sonde-prod sonde-essai sonde-cloudflare installer-sonde deployer-hetzner sonde-hetzner _outils
 
 # make livrer SANS_SAUVEGARDE=oui : livrer sans sauvegarde préalable, le temps que le compte « sauvegarde » existe.
 SANS_SAUVEGARDE ?=
@@ -59,7 +59,9 @@ check: _outils  ## tout ce qui doit passer avant de dire « fini » ; sur un arb
 	$(VITEST) run --no-file-parallelism
 	npm run -s check:images
 	@# les scripts Python se lisent sans erreur (ast, et non py_compile : pas de __pycache__ dans l'arbre)
-	$(PYTHON) -B -c 'import ast, sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' scripts/sauvegarde_nuit.py scripts/livrer.py scripts/gites_sonde.py scripts/gites_admin.py
+	$(PYTHON) -B -c 'import ast, sys; [ast.parse(open(f, encoding="utf-8").read(), f) for f in sys.argv[1:]]' scripts/sauvegarde_nuit.py scripts/livrer.py scripts/gites_sonde.py scripts/gites_admin.py scripts/importer_agenda_google.py scripts/test_importer_agenda_google.py
+	@# l'interprétation des titres d'agenda (import Google), sur des titres de la forme des vrais
+	$(PYTHON) -B -m unittest -q scripts/test_importer_agenda_google.py
 	@etat="$$(git status --porcelain)" || { echo "git status a échoué : aucune marque posée."; exit 1; }; \
 	head="$$(git rev-parse HEAD)" || { echo "git rev-parse a échoué : aucune marque posée."; exit 1; }; \
 	if [ -z "$$etat" ] && [ -n "$$head" ]; then mkdir -p .wrangler && echo "$$head" > $(MARQUE_CHECK) && echo "check vert sur $${head:0:8} : livrable."; \
@@ -92,3 +94,17 @@ installer-sonde:  ## copie scripts/gites_sonde.py là où le LaunchAgent com.jul
 
 sonde-essai:  ## la sonde publique de l'essai
 	$(PYTHON) scripts/livrer.py --sonde essai
+
+# Serveur Hetzner (docs/hebergement-hetzner.md). Variables : HETZNER_HOST (adresse ou nom du serveur),
+# HETZNER_URL (adresse publique pour la sonde), HETZNER_CLE (clé SSH de Claude, par défaut ~/.ssh/gites_hetzner_ed25519).
+HETZNER_HOST ?=
+HETZNER_CLE ?= $(HOME)/.ssh/gites_hetzner_ed25519
+HETZNER_URL ?=
+
+deployer-hetzner:  ## déploie main sur le serveur Hetzner sans passer par GitHub : make deployer-hetzner HETZNER_HOST=<ip-ou-nom> (ssh gites@… /srv/gites/deploy.sh)
+	@test -n "$(HETZNER_HOST)" || { echo "Donner HETZNER_HOST=<ip-ou-nom>"; exit 1; }
+	ssh -i $(HETZNER_CLE) -o IdentitiesOnly=yes gites@$(HETZNER_HOST) /srv/gites/deploy.sh
+
+sonde-hetzner:  ## la sonde publique du serveur Hetzner : make sonde-hetzner HETZNER_URL=https://<domaine> (ou http://<ip>) ; /api/public/health doit répondre ok
+	@test -n "$(HETZNER_URL)" || { echo "Donner HETZNER_URL=https://<domaine> (ou http://<ip>)"; exit 1; }
+	curl -fsS --max-time 15 $(HETZNER_URL)/api/public/health

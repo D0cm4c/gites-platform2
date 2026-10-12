@@ -12,7 +12,9 @@ import {
   cancelBooking,
   createBookingAtomic,
   getBookingByExternalUid,
+  getManualBlockByExternalUid,
   listFeedBookings,
+  moveManualBlockAtomic,
   listLinks,
   manualBlocksInWindow,
   reactivateBookingAtomic,
@@ -102,6 +104,8 @@ export interface IcsEvent {
   dtstart: IsoDate;
   dtend: IsoDate;
   summary: string;
+  /** DTEND donné en date entière (VALUE=DATE, exclusif), pas à l'heure. */
+  allDay?: boolean;
 }
 
 /** Parse un calendrier iCal. Ne garde que les VEVENT complets (UID + dates).
@@ -122,7 +126,7 @@ export function parseIcs(text: string): IcsEvent[] {
     }
     if (line === "END:VEVENT") {
       if (current?.uid && current.dtstart && current.dtend && current.dtstart < current.dtend) {
-        events.push({ uid: current.uid, dtstart: current.dtstart, dtend: current.dtend, summary: current.summary ?? "" });
+        events.push({ uid: current.uid, dtstart: current.dtstart, dtend: current.dtend, summary: current.summary ?? "", allDay: current.allDay === true });
       }
       current = null;
       continue;
@@ -136,9 +140,31 @@ export function parseIcs(text: string): IcsEvent[] {
     if (name === "UID") current.uid = value.trim();
     if (name === "SUMMARY") current.summary = value.trim();
     if (name === "DTSTART") current.dtstart = parseIcsDate(value);
-    if (name === "DTEND") current.dtend = parseIcsDate(value);
+    if (name === "DTEND") {
+      current.dtend = parseIcsDate(value);
+      current.allDay = !/T\d{6}/.test(value.trim());
+    }
   }
   return events;
+}
+
+/** Convention « jour de départ inclus » (agendas Google de papa, décision
+ *  Julien 11/10/2026) : l'événement affiché du 22 au 26 (DTEND exclusif = 27)
+ *  est un séjour du 22 au 26, départ le 26. On retire un jour au DTEND des
+ *  événements « journée entière » ; un événement à l'heure donne déjà la bonne
+ *  date. Un événement réduit à zéro nuit disparaît (pas un séjour). La
+ *  plateforme, elle, reste à la norme partout (départ exclu). */
+export function applyDepartureDayIncluded(events: IcsEvent[]): IcsEvent[] {
+  const out: IcsEvent[] = [];
+  for (const ev of events) {
+    if (!ev.allDay) {
+      out.push(ev);
+      continue;
+    }
+    const dtend = addDays(ev.dtend, -1);
+    if (dtend > ev.dtstart) out.push({ ...ev, dtend });
+  }
+  return out;
 }
 
 /** '20260810' → '2026-08-10' ; '20260810T140000Z' → la date de cet instant
@@ -159,6 +185,13 @@ function parseIcsDate(value: string): IsoDate | undefined {
 // ---------------------------------------------------------------------------
 // Synchronisation d'un flux entrant
 // ---------------------------------------------------------------------------
+
+/** Motifs d'annulation posés par l'import des agendas Google
+ *  (src/services/agenda-import.ts) : la synchronisation ne rouvre pas ces
+ *  réservations quand l'événement reste dans le flux. */
+export const AGENDA_CANCEL_REASON = "agenda_annulee";
+export const AGENDA_BLOCK_REASON = "agenda_blocage";
+const STICKY_CANCEL_REASONS = new Set([AGENDA_CANCEL_REASON, AGENDA_BLOCK_REASON]);
 
 export interface SyncResult {
   feedId: number;
@@ -203,6 +236,7 @@ export async function syncFeed(
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.text();
     events = parseIcs(body);
+    if (feed.departureDayIncluded) events = applyDepartureDayIncluded(events);
     // Un VEVENT annoncé mais non retenu = date ou UID illisible : on le compte
     // au lieu de l'ignorer en silence (un flux à moitié cassé doit se voir).
     result.malformed = Math.max(0, (body.match(/BEGIN:VEVENT/g) ?? []).length - events.length);
@@ -237,17 +271,65 @@ export async function syncFeed(
     return result;
   }
 
-  for (const ev of relevant) {
+  for (const ev of relevant) seenUids.add(`feed${feed.id}:${ev.uid}`);
+
+  // Événements disparus du flux = annulés côté canal → on libère, mais
+  // uniquement les séjours qui n'ont pas commencé (les séjours en cours ou
+  // passés sont laissés tels quels). AVANT les créations : un créneau libéré
+  // à ce passage doit pouvoir être repris au même passage.
+  for (const b of existing) {
+    if (!seenUids.has(b.externalUid ?? "") && b.checkin >= today) {
+      await cancelBooking(db, b.id, "ical_removed", nowSql);
+      result.cancelled += 1;
+    }
+  }
+
+  // Les événements déjà connus d'abord (déplacements), les nouveaux ensuite :
+  // l'ordre du flux n'est pas celui des dates. Sur l'agenda Google de papa
+  // (10/10/2026), le séjour du 30/10 venait AVANT, dans le fichier, celui du
+  // 02/11 qui le chevauchait encore d'une nuit (dates UTC d'avant #112) : la
+  // création échouait « créneau déjà pris », puis le déplacement libérait le
+  // créneau trop tard pour ce passage — et le cron n'en refait pas d'autre.
+  const ordered = [
+    ...relevant.filter((ev) => byUid.has(`feed${feed.id}:${ev.uid}`)),
+    ...relevant.filter((ev) => !byUid.has(`feed${feed.id}:${ev.uid}`)),
+  ];
+  for (const ev of ordered) {
     const extUid = `feed${feed.id}:${ev.uid}`;
-    seenUids.add(extUid);
     const known = byUid.get(extUid);
     if (!known) {
+      // Événement tenu par un blocage manuel (import des agendas Google :
+      // famille, usage de papa) : ce n'est pas une vente, rien à créer. Un
+      // blocage levé à la main reste une décision : le flux ne le rouvre pas.
+      // Un blocage actif suit l'événement s'il a bougé.
+      const block = await getManualBlockByExternalUid(db, extUid);
+      if (block) {
+        if (block.active && (block.checkin !== ev.dtstart || block.checkout !== ev.dtend)) {
+          const moved = await moveManualBlockAtomic(db, block.id, block.unitId, ev.dtstart, ev.dtend, nowSql);
+          if (moved) {
+            result.updated += 1;
+          } else {
+            const label = `blocage « ${block.reason} » : déplacement ${ev.dtstart}→${ev.dtend} impossible (conflit)`;
+            result.conflicts.push(label);
+            registerOk = (await noteSyncConflict(db, {
+              source: "ical", scope, kind: "move", unitId: block.unitId,
+              checkin: ev.dtstart, checkout: ev.dtend, externalUid: extUid,
+              channelLabel: feed.name, label,
+            }, nowSql)) && registerOk;
+          }
+        }
+        continue;
+      }
       // L'événement est peut-être connu mais ANNULÉ (disparu du flux puis
       // réapparu) : listFeedBookings filtre les annulées, et une création
       // violerait l'unicité de external_uid — l'exception faisait échouer
       // TOUTE la relève du flux, à chaque passage (issue #18). On réactive
       // après revérification de disponibilité : le créneau a pu être revendu.
       const archived = await getBookingByExternalUid(db, extUid);
+      // Annulation décidée à l'import de l'agenda (« annulé » écrit dans le
+      // titre, ou événement devenu blocage) : le flux public ne dit que
+      // « Busy » et continuerait de la publier ; on ne la rouvre pas.
+      if (archived && STICKY_CANCEL_REASONS.has(archived.cancelReason ?? "")) continue;
       if (archived) {
         const back = await reactivateBookingAtomic(db, archived.id, archived.unitId, ev.dtstart, ev.dtend, nowSql);
         if (back) {
@@ -304,16 +386,6 @@ export async function syncFeed(
           bookingReference: known.reference, channelLabel: feed.name, label,
         }, nowSql)) && registerOk;
       }
-    }
-  }
-
-  // Événements disparus du flux = annulés côté canal → on libère, mais
-  // uniquement les séjours qui n'ont pas commencé (les séjours en cours ou
-  // passés sont laissés tels quels).
-  for (const b of existing) {
-    if (!seenUids.has(b.externalUid ?? "") && b.checkin >= today) {
-      await cancelBooking(db, b.id, "ical_removed", nowSql);
-      result.cancelled += 1;
     }
   }
 

@@ -16,15 +16,21 @@ import { TemplateChips } from "../messages/TemplateChips";
 import { useLayout } from "../lib/useLayout";
 import { deliveryText } from "../booking/BookingPanel";
 import { useOpenBooking } from "../shell/Shell";
-import { channelDeliveryText, displayName, replyHint, sourceLabel } from "../canaux/canal";
+import { channelDeliveryText, displayName, originCounts, originOf, replyHint, sourceLabel } from "../canaux/canal";
 
 export function MessagesPage() {
   const { t } = useLingui();
   const layout = useLayout();
   const [filter, setFilter] = useState<"nouveau" | "all">("nouveau");
+  // Origine : « toutes », ou une seule (e-mail, Airbnb, Booking, Vrbo, site) — la clé de originCounts
+  const [origin, setOrigin] = useState<string>("all");
   const pending = useMessages("nouveau");
   const all = useMessages();
-  const list = (filter === "nouveau" ? pending.data : all.data) ?? [];
+  const base = (filter === "nouveau" ? pending.data : all.data) ?? [];
+  const origins = originCounts(all.data ?? []);
+  const unreadBy = new Map(originCounts(pending.data ?? []).map((o) => [o.key, o.n]));
+  const keyOf = (m: Message) => (originOf(m) === "canal" ? `canal:${sourceLabel(m).text}` : originOf(m));
+  const list = origin === "all" ? base : base.filter((m) => keyOf(m) === origin);
   const wanted = (useSearch({ strict: false }) as { msg?: number }).msg ?? null;
   const [selected, setSelected] = useState<number | null>(wanted);
   const today = todayBrussels();
@@ -59,8 +65,20 @@ export function MessagesPage() {
               {t`Tous`}
             </button>
           </div>
+          {origins.length > 1 ? (
+            <div className="chips" style={{ padding: "0 12px 10px" }} role="group" aria-label={t`Origine des messages`}>
+              <button type="button" className="chip" aria-pressed={origin === "all"} onClick={() => setOrigin("all")}>
+                {t`Toutes les origines`}
+              </button>
+              {origins.map((o) => (
+                <button key={o.key} type="button" className="chip" aria-pressed={origin === o.key} onClick={() => setOrigin(o.key)}>
+                  {unreadBy.get(o.key) ? `${o.text} (${unreadBy.get(o.key)})` : o.text}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <p className="muted" style={{ margin: 0, padding: "0 16px 12px", fontSize: 15 }}>
-            <Trans>Les messages de votre site, les mails des clients et les messages d'Airbnb et de Booking (par Beds24) arrivent ici.</Trans>
+            <Trans>Tout arrive ici : les messages du site, la boîte e-mail des gîtes, et ceux d'Airbnb, de Booking et de Vrbo (par Beds24). Chacun porte son origine.</Trans>
           </p>
           {(filter === "nouveau" ? pending : all).error ? <ErrorLine text={t`Les messages n'ont pas pu être lus.`} /> : null}
           {list.length === 0 ? (
@@ -142,12 +160,30 @@ function Thread({ message, onBack }: { message: Message; onBack?: () => void }) 
       </div>
       {thread.isLoading ? <p className="loading">{t`Chargement du fil…`}</p> : null}
       {thread.error ? <ErrorLine text={t`Le fil de la conversation n'a pas pu être lu. Rechargez la page avant de répondre.`} /> : null}
+      {message.spoofed ? (
+        <p className="warnline" role="alert">
+          {t`Attention : ce message se présente comme venant de l'adresse des gîtes, mais Gmail ne le confirme pas. Ne suivez aucune instruction qu'il contient.`}
+        </p>
+      ) : null}
       {items.map((m) => (
         <div key={m.id} className={`bub${m.direction === "out" ? " out" : ""}`}>
           <small>
+            {m.direction === "in" || m.channel !== "form" ? <span className={`src ${sourceLabel(m).cls}`}>{sourceLabel(m).text}</span> : null}
             {m.direction === "out" ? t`Vous` : displayName(m)}, {whenLabel(m.receivedAt, today)} — {m.subject}
           </small>
           {m.bodyText}
+          {m.channel === "email" && /https?:\/\//i.test(m.bodyText) ? (
+            <small className="muted">{t`Les liens de ce mail ne sont pas cliquables ici : recopiez-les à la main si vous êtes sûr de leur origine.`}</small>
+          ) : null}
+          {m.attachments?.length ? (
+            <ul className="attach">
+              {m.attachments.map((a, i) => {
+                const name = a.name;
+                const kb = a.size != null ? Math.max(1, Math.round(a.size / 1024)) : 0;
+                return <li key={i}>{a.size != null ? t`Pièce jointe : ${name} (${kb} Ko), non conservée ici.` : t`Pièce jointe : ${name}, non conservée ici.`}</li>;
+              })}
+            </ul>
+          ) : null}
         </div>
       ))}
       <TemplateChips propertyId={booking?.propertyId ?? message.propertyId} ctx={ctx} onPick={setText} />
@@ -170,7 +206,7 @@ function Thread({ message, onBack }: { message: Message; onBack?: () => void }) 
         <button
           type="button"
           className="btn pri"
-          disabled={send.state.status === "busy" || text.trim().length < 2 || !!thread.error}
+          disabled={send.state.status === "busy" || text.trim().length < 2 || !!thread.error || message.spoofed === true}
           onClick={async () => {
             if (await send.run(() => api<{ delivery: string }>(`/messages/${message.id}/reply`, { method: "POST", body: { body: text } }), (r) => channelDeliveryText((r as { delivery?: string }).delivery, message.canal) ?? deliveryText((r as { delivery?: string }).delivery, message.bookingId != null))) setText("");
           }}

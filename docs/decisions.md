@@ -8,6 +8,13 @@ Ce registre ne contient ni donnée de voyageur, ni montant réel, ni identifiant
 compte. Les questions juridiques (obligations légales, CGV) se traitent hors de
 ce dépôt : il n'en garde que la conséquence pour le code.
 
+## 2026-10-11 — Tous les messages reviennent dans la plateforme
+
+La boîte Gmail dédiée est l'adresse de contact des gîtes. La plateforme la relève (IMAP) et
+chaque message porte son origine : e-mail, Airbnb, Booking, Vrbo ou site. On répond depuis
+Messages, jamais à la main dans Gmail : le but est de réduire les mails au minimum, tout
+passe par l'outil. Détail et limites : `docs/messagerie.md`.
+
 ## 2026-10-10 — Une seule version : Infomaniak
 
 - **La production est le site Node.js chez Infomaniak** (`https://dev1.mdcdy.be`,

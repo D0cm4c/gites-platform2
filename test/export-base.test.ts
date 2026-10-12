@@ -75,6 +75,21 @@ describe("export.sqlite (cible Node, base SQLite réelle)", () => {
   it("refuse sans authentification", async () => {
     expect((await call(env, "GET", "/api/admin/export.sqlite", null)).status).toBe(401);
   });
+
+  it("n'emporte pas les secrets Stripe des propriétés (migration 0030)", async () => {
+    d1.raw.exec("INSERT INTO property_stripe (property_id, secret_key, publishable_key, webhook_secret) VALUES (1, 'sk_test_SECRETAEXCLURE01', 'pk_test_PUBLIQUE000001', 'whsec_SECRETAEXCLURE01')");
+    try {
+      const res = await call(env, "GET", "/api/admin/export.sqlite", ADMIN);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const text = new TextDecoder("latin1").decode(bytes);
+      expect(text).not.toContain("SECRETAEXCLURE01");
+      expect(text).toContain("PUBLIQUE000001");
+      // La base vivante, elle, garde ses clés.
+      expect((d1.raw.prepare("SELECT secret_key AS k FROM property_stripe").get() as { k: string }).k).toBe("sk_test_SECRETAEXCLURE01");
+    } finally {
+      d1.raw.exec("DELETE FROM property_stripe");
+    }
+  });
 });
 
 describe("export.sql (D1) et compte « sauvegarde »", () => {

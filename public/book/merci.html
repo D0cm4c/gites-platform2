@@ -14,12 +14,12 @@
   <div class="card center" id="box">
     <div class="big-check">⏳</div>
     <h3 data-i18n>Confirmation en cours…</h3>
-    <p class="muted small" data-i18n>Nous vérifions votre paiement, cela prend quelques secondes.</p>
+    <p class="muted small" data-i18n>Nous vérifions votre paiement, cela prend quelques secondes. Vous pouvez garder cette page ouverte : la confirmation vous parvient aussi par e-mail.</p>
   </div>
   <p class="footer-note legal-links" data-i18n><a href="/mentions-legales/">Mentions légales</a> · <a href="/confidentialite/">Confidentialité</a> · <a href="/conditions-generales/">Conditions générales</a></p>
 </div>
 <script type="module">
-import { apiHeaders, LANG, t, translateStatic } from "./i18n.js";
+import { apiHeaders, eur, hour, LANG, t, translateStatic } from "./i18n.js";
 translateStatic();
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const q = new URLSearchParams(location.search);
@@ -35,7 +35,8 @@ async function poll(attempt = 0) {
   const box = document.getElementById("box");
   if (!ref || !email) {
     box.innerHTML = `<div class="big-check">✅</div><h3>${t("Paiement reçu")}</h3>
-      <p class="muted small">${t("Votre confirmation arrive par email.")}</p>`;
+      <p class="muted small">${t("Votre confirmation arrive par email.")}</p>
+      <p class="small muted">${t("Son objet commence par la référence de votre réservation. Une question ? Répondez simplement à cet e-mail.")}</p>`;
     return;
   }
   if (attempt === 0 && redirectStatus === "failed") {
@@ -52,10 +53,28 @@ async function poll(attempt = 0) {
     const res = await fetch(`/api/public/bookings/${encodeURIComponent(ref)}?email=${encodeURIComponent(email)}`, { headers: apiHeaders() });
     const data = await res.json();
     if (res.ok && data.booking.status === "confirmed") {
+      const bk = data.booking;
+      // Payé : le décompte « créneau bloqué » du tunnel n'a plus lieu d'être.
+      // Sans ce nettoyage, le visiteur qui retourne sur la page de réservation
+      // y lit « reprendre le paiement » alors qu'il a déjà payé.
+      try { for (const k of Object.keys(sessionStorage)) if (k.startsWith("gites-hold:")) sessionStorage.removeItem(k); } catch { /* navigation privée */ }
+      const dfr = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+      const balance = bk.balanceCents > 0
+        ? (bk.balanceDueDate
+          ? t("Le solde de {montant} est à payer avant le {date} : vous recevrez un lien de paiement par e-mail, et vous pouvez aussi payer dès maintenant depuis votre voucher.", { montant: eur(bk.balanceCents), date: dfr(bk.balanceDueDate) })
+          : t("Le solde de {montant} reste à payer : vous le réglez en ligne depuis votre voucher.", { montant: eur(bk.balanceCents) }))
+        : t("Votre séjour est intégralement réglé : il n'y a plus rien à payer.");
       box.innerHTML = `<div class="big-check">✅</div>
         <h3>${t("Réservation confirmée !")}</h3>
-        <p>${t("Référence <b class=\"mono\">{ref}</b> — un email de confirmation avec les conditions générales et le contrat de location vous est adressé.", { ref: esc(ref) })}</p>
-        <p style="margin-top:14px"><a class="btn" href="${voucherUrl}">${t("Voir mon voucher")}</a></p>`;
+        <p>${t("Référence <b class=\"mono\">{ref}</b>", { ref: esc(ref) })}<br>
+        <span class="small muted">${esc(bk.unitName)} · ${t("du {du} au {au}", { du: dfr(bk.checkin), au: dfr(bk.checkout) })}</span></p>
+        <div class="next" style="text-align:left"><h4>${t("Ce qui se passe maintenant")}</h4><ol>
+          <li>${t("Vous recevez dans quelques minutes un e-mail de confirmation, avec votre récapitulatif et les conditions générales. Son objet commence par [{ref}].", { ref: esc(ref) })}</li>
+          <li>${balance}</li>
+          <li>${t("Arrivée dès {arr}, départ avant {dep}.", { arr: esc(hour(data.stay?.checkinTime)), dep: esc(hour(data.stay?.checkoutTime)) })}</li>
+          <li>${t("Une question ? Répondez simplement à l'e-mail de confirmation : pas de chat, nous répondons par e-mail.")}</li></ol></div>
+        <p style="margin-top:14px"><a class="btn" href="${voucherUrl}">${t("Voir mon voucher")}</a></p>
+        <p class="small muted" style="margin-top:8px">${t("Pas reçu l'e-mail ? Regardez dans vos courriers indésirables, ou retrouvez tout sur votre voucher.")}</p>`;
       return;
     }
   } catch { /* on repollera */ }

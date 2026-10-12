@@ -132,6 +132,32 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   return data as T;
 }
 
+/** Ouvre un PDF du back-office (confirmation de réservation et conditions générales) dans un nouvel onglet.
+ *  Le fichier est demandé avec l'en-tête d'accès (un simple lien n'en porterait
+ *  pas) ; l'onglet est ouvert AVANT l'attente pour ne pas être bloqué par le navigateur. */
+export async function openAdminPdf(path: string): Promise<void> {
+  const tab = window.open("", "_blank");
+  try {
+    const auth = authHeader();
+    const res = await fetch(new URL(`/api/admin${path}`, window.location.origin), { headers: auth ? { authorization: auth } : {} });
+    if (!res.ok) {
+      if (res.status === 401) {
+        clearSession();
+        unauthorizedListeners.forEach((fn) => fn());
+      }
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      throw new ApiError(res.status, body?.error ?? `erreur ${res.status}`, body);
+    }
+    const url = URL.createObjectURL(await res.blob());
+    if (tab) tab.location.href = url;
+    else window.location.href = url;
+    setTimeout(() => URL.revokeObjectURL(url), 120_000);
+  } catch (e) {
+    tab?.close();
+    throw e;
+  }
+}
+
 /** Envoi d'un formulaire multipart (photos) : même garde et mêmes erreurs que api(). */
 export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json" };

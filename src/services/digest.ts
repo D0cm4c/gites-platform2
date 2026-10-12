@@ -29,6 +29,7 @@ import {
   type BookingRow,
 } from "../db/repo";
 import { formatDateFr, formatEur, queueEmail } from "./email";
+import { countRecentImprovements } from "./improvements";
 import { getSetting, setSetting } from "./settings";
 
 /** Destinataires du résumé, séparés par des virgules. Aucune adresse n'est
@@ -75,6 +76,8 @@ export interface DigestData {
   /** Signaux transverses : ils ne dépendent pas d'un domaine en particulier. */
   brokenFeeds: string[];
   unreadMessages: number;
+  /** Remarques d'amélioration des testeurs reçues dans les dernières 24 h. */
+  newImprovements: number;
   /** Vrai si absolument rien ne mérite l'attention du propriétaire. */
   quiet: boolean;
 }
@@ -179,9 +182,12 @@ export async function collectDigest(db: D1Database, now: Date = new Date()): Pro
     unreadMessages = 0; // table absente sur une base pas encore migrée
   }
 
+  const newImprovements = await countRecentImprovements(db, since);
+
   const quiet =
     brokenFeeds.length === 0 &&
     unreadMessages === 0 &&
+    newImprovements === 0 &&
     digests.every(
       (d) =>
         d.arrivals.length === 0 &&
@@ -196,7 +202,7 @@ export async function collectDigest(db: D1Database, now: Date = new Date()): Pro
         d.watch.length === 0,
     );
 
-  return { today, properties: digests, brokenFeeds, unreadMessages, quiet };
+  return { today, properties: digests, brokenFeeds, unreadMessages, newImprovements, quiet };
 }
 
 /** Met en forme le résumé. Texte brut : il doit rester lisible sur un
@@ -266,6 +272,10 @@ export function renderDigest(data: DigestData): { subject: string; bodyText: str
     if (bloc.length > 0) {
       lines.push(``, `--- ${p.name} ---`, ``, ...bloc);
     }
+  }
+
+  if ((data.newImprovements ?? 0) > 0) {
+    lines.push(``, `${data.newImprovements} nouvelle${data.newImprovements > 1 ? "s" : ""} remarque${data.newImprovements > 1 ? "s" : ""} d'amélioration (dernières 24 h) : à lire dans Réglages, Améliorations.`);
   }
 
   const watch = [...data.properties.flatMap((p) => p.watch), ...data.brokenFeeds];

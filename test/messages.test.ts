@@ -137,3 +137,48 @@ describe("fil de conversation du voucher (sans email)", () => {
     expect((thread.data.messages as unknown[]).length).toBe(1); // le message contact est lié au guest → visible
   });
 });
+
+describe("accusé de réception (passe « client » du 12/10/2026)", () => {
+  const mails = async () =>
+    (await t.db.prepare("SELECT to_email, subject, body_text, kind, booking_id FROM email_log WHERE kind = 'contact_ack' ORDER BY id").all<{ to_email: string; subject: string; body_text: string; kind: string; booking_id: number | null }>()).results;
+
+  it("question avant réservation : référence QU-… dans l'objet, mail journalisé, message repris", async () => {
+    const res = await call("POST", "/api/public/contact", {
+      property: "pre-more", name: "Léa Martin", email: "lea@example.com",
+      message: "Le sauna est-il chauffé ?\n<script>alert(1)</script>",
+    });
+    expect(res.status).toBe(201);
+    const ref = res.data.reference as string;
+    expect(ref).toMatch(/^QU-\d{4}-\d{4}$/);
+    expect(res.data.ackSent).toBe(true);
+    const [m] = await mails();
+    expect(m!.to_email).toBe("lea@example.com");
+    expect(m!.subject).toBe(`[${ref}] Nous avons bien reçu votre message — Les Gîtes du Pré Moré`);
+    expect(m!.subject).not.toContain("Léa");
+    expect(m!.body_text).toContain(ref);
+    expect(m!.body_text).toContain("> Le sauna est-il chauffé ?");
+    // le message stocké porte la référence dans son objet : la réponse y sera rattachée
+    const stored = await t.db.prepare("SELECT subject FROM messages").first<{ subject: string }>();
+    expect(stored!.subject.startsWith(`[${ref}]`)).toBe(true);
+  });
+
+  it("depuis le voucher : la référence de la réservation, et le lien au dossier", async () => {
+    const booking = await createBookingViaAdmin();
+    const sent = await call("POST", `/api/public/bookings/${booking.reference}/messages`, { email: GUEST.email, message: "Peut-on arriver vers 20h ?" });
+    expect(sent.status).toBe(201);
+    expect(sent.data.ackSent).toBe(true);
+    const [m] = await mails();
+    expect(m!.subject.startsWith(`[${booking.reference}] `)).toBe(true);
+    expect(m!.booking_id).toBe(booking.id);
+  });
+
+  it("plus de 3 messages par heure et par adresse : le message est gardé, l'accusé ne part plus", async () => {
+    let last: Record<string, unknown> = {};
+    for (let i = 0; i < 5; i++) {
+      last = (await call("POST", "/api/public/contact", { property: "pre-more", name: "Lou", email: "lou@example.com", message: `question numéro ${i}` })).data;
+    }
+    expect(last.ackSent).toBe(false);
+    expect((await mails()).length).toBe(3);
+    expect(await t.db.prepare("SELECT COUNT(*) AS n FROM messages").first<{ n: number }>()).toEqual({ n: 5 });
+  });
+});

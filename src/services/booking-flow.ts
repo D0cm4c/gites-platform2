@@ -10,6 +10,7 @@ import {
   findPaymentBySession,
   getBooking,
   getProperty,
+  hasEmailOfKinds,
   getSettings,
   incrementPromoUse,
   listPayments,
@@ -19,15 +20,19 @@ import {
   type BookingRow,
   type QuoteContext,
 } from "../db/repo";
-import { buildPaymentReceiptEmail, buildVoucherEmail, queueEmail } from "./email";
+import { buildPaymentReceiptEmail, queueEmail } from "./email";
+import { buildConfirmationEmail } from "./confirmation";
+import { buildConfirmationPdf, confirmationFileName, loadConfirmationPdfContext } from "./confirmation-pdf";
 import {
   createCheckoutSession,
   createPaymentIntent,
   paymentElementEnabled,
   remotePaymentInFlight,
   stripeEnabled,
+  stripePublishableKey,
   voidRemotePayment,
 } from "./stripe";
+import { propertyIdOfBooking, resolveStripeConfig } from "./stripe-config";
 
 export interface QuoteBody {
   unitId: number;
@@ -112,6 +117,12 @@ export class PaymentInFlightError extends Error {
   }
 }
 
+/** Configuration Stripe de la propriété d'une réservation (clés propres, sinon repli env). */
+export async function stripeConfigForBooking(db: D1Database, env: Env, booking: { id: number; propertyId?: number | null }) {
+  const propertyId = booking.propertyId ?? (await propertyIdOfBooking(db, booking.id));
+  return resolveStripeConfig(db, env, propertyId);
+}
+
 export async function voidPendingSessions(
   db: D1Database,
   env: Env,
@@ -119,18 +130,19 @@ export async function voidPendingSessions(
   actor: "public" | "admin",
 ): Promise<void> {
   const pendings = (await listPayments(db, { bookingId })).filter((x) => x.status === "pending");
+  const cfg = await stripeConfigForBooking(db, env, { id: bookingId });
   for (const pay of pendings) {
     if (pay.stripeSessionId) {
       // Garde-fou AVANT toute écriture : une intention déjà en route chez la
       // banque du client ne s'annule pas. Marquer la ligne `failed` et en
       // ouvrir une seconde produirait deux débits (contre-review 2026-08-30).
-      if (await remotePaymentInFlight(env, pay.stripeSessionId)) throw new PaymentInFlightError();
+      if (await remotePaymentInFlight(cfg, pay.stripeSessionId)) throw new PaymentInFlightError();
       // `voidRemotePayment` reconnaît la forme de la référence : session
       // Checkout (`cs_…`), PaymentIntent (`pi_…`) ou simulateur (`stub_…`).
       // Une même réservation peut porter les deux si le mode a changé entre
       // deux tentatives — d'où l'aiguillage plutôt qu'un appel en dur.
-      const closed = await voidRemotePayment(env, pay.stripeSessionId);
-      if (!closed && stripeEnabled(env)) {
+      const closed = await voidRemotePayment(cfg, pay.stripeSessionId);
+      if (!closed && stripeEnabled(cfg)) {
         await audit(db, actor, "payment.expire_failed", `booking:${bookingId}`, {
           payment: pay.id,
           session: pay.stripeSessionId,
@@ -183,6 +195,7 @@ export async function startCheckout(
   actor: "public" | "admin",
 ): Promise<{ url: string; paymentId: number }> {
   await voidPendingSessions(db, env, booking.id, actor);
+  const cfg = await stripeConfigForBooking(db, env, booking);
   const paymentId = await addPayment(db, {
     bookingId: booking.id,
     kind,
@@ -192,7 +205,8 @@ export async function startCheckout(
   });
   const label = paymentLabel(booking, kind);
   const returnUrls = paymentReturnUrls(env, booking, kind);
-  const session = await createCheckoutSession(env, {
+  const session = await createCheckoutSession(cfg, {
+    baseUrl: env.PUBLIC_BASE_URL,
     paymentId,
     reference: booking.reference,
     label,
@@ -222,6 +236,10 @@ export interface PaymentStart {
   returnUrl: string;
   amountCents: number;
   kind: PaymentKind;
+  /** Clé PUBLIABLE du compte Stripe de la propriété (mode `element` seulement) :
+   *  le navigateur doit monter le formulaire avec la clé du compte qui a créé le
+   *  PaymentIntent. Faite pour être publique, contrairement à la clé secrète. */
+  publishableKey: string | null;
 }
 
 /** Point d'entrée unique du paiement côté client (issue #26).
@@ -245,7 +263,8 @@ export async function startPayment(
   actor: "public" | "admin",
 ): Promise<PaymentStart> {
   const returnUrl = paymentReturnUrls(env, booking, kind).successUrl;
-  if (!paymentElementEnabled(env)) {
+  const cfg = await stripeConfigForBooking(db, env, booking);
+  if (!paymentElementEnabled(cfg)) {
     const legacy = await startCheckout(db, env, booking, kind, amountCents, actor);
     return {
       paymentId: legacy.paymentId,
@@ -255,6 +274,7 @@ export async function startPayment(
       returnUrl,
       amountCents,
       kind,
+      publishableKey: null,
     };
   }
 
@@ -268,7 +288,7 @@ export async function startPayment(
     amountCents,
     status: "pending",
   });
-  const intent = await createPaymentIntent(env, {
+  const intent = await createPaymentIntent(cfg, {
     paymentId,
     reference: booking.reference,
     kind,
@@ -290,6 +310,7 @@ export async function startPayment(
     returnUrl,
     amountCents,
     kind,
+    publishableKey: stripePublishableKey(cfg),
   };
 }
 
@@ -331,14 +352,14 @@ export async function handlePaymentSuccess(
         await incrementPromoUse(db, booking.propertyId, booking.promoCode);
       }
       await audit(db, "stripe", "booking.confirmed", `booking:${booking.id}`, { sessionId, kind: payment.kind });
-      // Un voucher qui casse ne doit jamais faire échouer le webhook : au retry,
+      // Une confirmation qui casse ne doit jamais faire échouer le webhook : au retry,
       // Stripe retomberait sur un paiement déjà 'succeeded' et sortirait sans
       // jamais réessayer l'envoi. On journalise et on laisse la résa confirmée
-      // (bouton « Renvoyer le voucher » disponible au back-office).
+      // (bouton « Renvoyer la confirmation » disponible au back-office).
       try {
-        await sendVoucher(db, env, booking.id);
+        await sendConfirmation(db, env, booking.id);
       } catch (e) {
-        await audit(db, "stripe", "voucher.error", `booking:${booking.id}`, {
+        await audit(db, "stripe", "confirmation.error", `booking:${booking.id}`, {
           sessionId,
           error: e instanceof Error ? e.message : String(e),
         });
@@ -444,20 +465,64 @@ async function sendPaymentReceipt(
   }
 }
 
-/** Génère et journalise (ou envoie, si activé) le voucher de confirmation. */
-export async function sendVoucher(db: D1Database, env: Env, bookingId: number): Promise<boolean> {
-  const booking = await getBooking(db, bookingId);
-  if (!booking || !booking.guestEmail || booking.propertyId == null) return false;
-  const property = await getProperty(db, booking.propertyId);
-  if (!property) return false;
-  const settings = await getSettings(db, booking.propertyId);
-  const email = buildVoucherEmail({ booking, property, settings, voucherUrl: voucherUrl(env, booking) });
-  await queueEmail(db, env, {
-    bookingId: booking.id,
-    to: booking.guestEmail,
-    subject: email.subject,
-    bodyText: email.bodyText,
-    kind: "voucher",
-  });
+/** Mail de confirmation de réservation, avec le PDF « Confirmation de
+ *  réservation et conditions générales » en pièce jointe.
+ *
+ *  C'est LE mail de confirmation : il remplace l'ancien voucher par mail
+ *  (décision du 11/10/2026), qui ne part donc plus en plus de lui. Il part
+ *  - à la confirmation par paiement (webhook Stripe, simulateur dev),
+ *  - à la vente confirmée du back-office et à la confirmation manuelle,
+ *  - sur demande, via « Renvoyer la confirmation » (`force`).
+ *  Sans `force`, il ne part qu'UNE fois par réservation : si un envoi non
+ *  échoué existe déjà au journal (kind 'confirmation', ou 'voucher' pour les
+ *  réservations d'avant), on ne renvoie rien. Rend true si un mail a été
+ *  journalisé (envoyé, ou stub), false sinon. */
+export async function sendConfirmation(
+  db: D1Database,
+  env: Env,
+  bookingId: number,
+  opts: { force?: boolean } = {},
+): Promise<boolean> {
+  const ctx = await loadConfirmationPdfContext(db, bookingId);
+  if (!ctx || !ctx.booking.guestEmail) return false;
+  let claimed = false;
+  if (!opts.force) {
+    if (await hasEmailOfKinds(db, bookingId, ["confirmation", "voucher"])) return false;
+    // Verrou posé AVANT l'envoi : le SELECT ci-dessus ne protège pas de deux
+    // appels simultanés, l'INSERT OR IGNORE si (clé primaire).
+    const claim = await db.prepare("INSERT OR IGNORE INTO confirmation_claims (booking_id) VALUES (?1)").bind(bookingId).run();
+    if ((claim.meta?.changes ?? 0) === 0) return false;
+    claimed = true;
+  }
+  const filename = confirmationFileName(ctx.booking.reference);
+  let message: Parameters<typeof queueEmail>[2];
+  try {
+    const email = buildConfirmationEmail({
+      booking: ctx.booking,
+      property: ctx.property,
+      settings: ctx.settings,
+      voucherUrl: voucherUrl(env, ctx.booking),
+      attachmentName: filename,
+    });
+    message = {
+      bookingId,
+      to: ctx.booking.guestEmail,
+      subject: email.subject,
+      bodyText: email.bodyText,
+      bodyHtml: email.bodyHtml,
+      attachments: [{ filename, contentType: "application/pdf", content: buildConfirmationPdf(ctx) }],
+      kind: "confirmation",
+    };
+  } catch (e) {
+    // Rien n'est parti : le verrou est rendu.
+    if (claimed) await db.prepare("DELETE FROM confirmation_claims WHERE booking_id = ?1").bind(bookingId).run();
+    throw e;
+  }
+  // Une exception de queueEmail laisse le verrou en place : le transport a pu
+  // accepter le mail avant que le journal échoue, et un doublon chez le client
+  // est pire qu'une confirmation à renvoyer à la main (bouton « Renvoyer »).
+  // Seul un échec CONSTATÉ (statut `failed`) rend le verrou.
+  const status = await queueEmail(db, env, message);
+  if (status === "failed" && claimed) await db.prepare("DELETE FROM confirmation_claims WHERE booking_id = ?1").bind(bookingId).run();
   return true;
 }

@@ -4,7 +4,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { D1Database } from "@cloudflare/workers-types";
 import { createTestDb, type TestDb } from "./helpers/d1";
-import { buildIcs, parseIcs, syncFeed } from "../src/services/ical";
+import { applyDepartureDayIncluded, buildIcs, parseIcs, syncFeed } from "../src/services/ical";
 import { createBookingAtomic, createFeed, getFeed, listFeedBookings, listBookings, getBooking } from "../src/db/repo";
 
 const SCIERIE = 2;
@@ -59,7 +59,24 @@ describe("parseIcs", () => {
       dtstart: "2026-10-05",
       dtend: "2026-10-09",
       summary: "Reserved - Airbnb HMKAXY123",
+      allDay: true,
     });
+  });
+
+  it("convention « jour de départ inclus » : retire un jour aux journées entières, pas aux heures", () => {
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT", "UID:j@x", "DTSTART;VALUE=DATE:20261222", "DTEND;VALUE=DATE:20261227", "END:VEVENT",
+      "BEGIN:VEVENT", "UID:h@x", "DTSTART:20261222T150000Z", "DTEND:20261226T090000Z", "END:VEVENT",
+      "BEGIN:VEVENT", "UID:un-jour@x", "DTSTART;VALUE=DATE:20261230", "DTEND;VALUE=DATE:20261231", "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\n");
+    const events = applyDepartureDayIncluded(parseIcs(ics));
+    // « du 22 au 26 » affiché (DTEND exclusif 27) = départ le 26, 4 nuits
+    expect(events.map((e) => [e.uid, e.dtstart, e.dtend])).toEqual([
+      ["j@x", "2026-12-22", "2026-12-26"],
+      ["h@x", "2026-12-22", "2026-12-26"],
+    ]);
   });
 
   it("accepte les DTSTART en date-time et ignore les événements incomplets", () => {
@@ -120,6 +137,29 @@ async function makeFeed(): Promise<NonNullable<Awaited<ReturnType<typeof getFeed
 }
 
 describe("syncFeed (import complet sur vraie D1)", () => {
+  it("un flux « jour de départ inclus » libère le jour du départ pour l'arrivée suivante", async () => {
+    const id = await createFeed(db, { unitId: SCIERIE, name: "Agenda papa", url: "https://example.com/papa.ics", departureDayIncluded: true });
+    const feed = await getFeed(db, id);
+    if (!feed) throw new Error("feed non créé");
+    expect(feed.departureDayIncluded).toBe(true);
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT", "UID:papa-1@google.com", "DTSTART;VALUE=DATE:20261005", "DTEND;VALUE=DATE:20261010", "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\n");
+    const result = await syncFeed(db, feed, mockFetch(ics), NOW);
+    expect(result.error).toBeNull();
+    expect(result.imported).toBe(1);
+    const [b] = await listFeedBookings(db, feed.id);
+    expect([b!.checkin, b!.checkout]).toEqual(["2026-10-05", "2026-10-09"]);
+    // le 9 (jour du départ) est libre : une arrivée le 9 passe
+    const suivant = await createBookingAtomic(db, {
+      unitId: SCIERIE, checkin: "2026-10-09", checkout: "2026-10-11",
+      adults: 2, children: 0, status: "confirmed", source: "manual", now: NOW,
+    });
+    expect(suivant.ok).toBe(true);
+  });
+
   it("importe les événements futurs en résas confirmées, avec liaison active", async () => {
     const feed = await makeFeed();
     const result = await syncFeed(db, feed, mockFetch(AIRBNB_ICS), NOW);
@@ -260,6 +300,21 @@ describe("syncFeed (import complet sur vraie D1)", () => {
     expect(back.conflicts).toHaveLength(1);
     expect(back.conflicts[0]).toContain("réactivation");
     if (direct.ok) expect((await getBooking(db, direct.id))?.status).toBe("confirmed");
+  });
+
+  it("nouvel événement listé AVANT le déplacement qui lui libère la place : importé au même passage", async () => {
+    // Cas réel du 10/10/2026 (agenda Google de papa, dates UTC d'avant #112) :
+    // la résa connue passe du 01/11 au 02/11, et le séjour 30/10→02/11, écrit
+    // plus haut dans le fichier, n'entre qu'une fois ce déplacement fait.
+    const feed = await makeFeed();
+    const cal = (events: string[][]) =>
+      ["BEGIN:VCALENDAR", ...events.flatMap(([uid, a, b]) => ["BEGIN:VEVENT", `UID:${uid}`, `DTSTART;VALUE=DATE:${a}`, `DTEND;VALUE=DATE:${b}`, "SUMMARY:Busy", "END:VEVENT"]), "END:VCALENDAR"].join("\r\n");
+    await syncFeed(db, feed, mockFetch(cal([["suivant@google.com", "20271101", "20271108"]])), NOW);
+    const r = await syncFeed(db, feed, mockFetch(cal([
+      ["avant@google.com", "20271030", "20271102"],
+      ["suivant@google.com", "20271102", "20271108"],
+    ])), NOW);
+    expect(r).toMatchObject({ imported: 1, updated: 1, conflicts: [] });
   });
 
   it("erreur réseau → statut d'erreur sur le flux, aucune résa touchée", async () => {

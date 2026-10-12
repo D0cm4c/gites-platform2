@@ -4,7 +4,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { D1Database } from "@cloudflare/workers-types";
 import { createTestDb, type TestDb } from "./helpers/d1";
-import { buildReplyMime, decodeEncodedWords, parseRawEmail, processInboundEmail } from "../src/services/inbound-email";
+import { buildReplyMime, decodeEncodedWords, extractMessageIds, htmlToText, parseRawEmail, processInboundEmail } from "../src/services/inbound-email";
 import { createBookingAtomic, getSettings, listMessages, updateSettings, upsertGuest } from "../src/db/repo";
 
 let t: TestDb;
@@ -203,5 +203,162 @@ describe("processInboundEmail (D1)", () => {
     parsed.messageId = "<autre@id>";
     const r = await processInboundEmail(db, ENV, parsed, {}, NOW);
     expect(r.propertyId).toBe(2);
+  });
+});
+
+// --- parseur MIME : cas durs de la relève IMAP ----------------------------------
+
+/** Octets → chaîne « binaire » comme la rend node/imap.mjs (un caractère par octet). */
+const bin = (text: string | Buffer, encoding: BufferEncoding = "utf8") =>
+  (Buffer.isBuffer(text) ? text : Buffer.from(text, encoding)).toString("latin1");
+
+describe("parseRawEmail : encodages et charsets", () => {
+  it("quoted-printable en iso-8859-1, avec saut de ligne mou et espaces avant le saut", () => {
+    const m = ["From: a@b.c", "Subject: x", "Content-Type: text/plain; charset=iso-8859-1", "Content-Transfer-Encoding: quoted-printable", "",
+      "Un caf=E9 tr=E8s long, tr=E8s lo= ", "ng, d=E9j=E0 fini.", ""].join("\r\n");
+    expect(parseRawEmail(m).textBody).toBe("Un café très long, très long, déjà fini.");
+  });
+
+  it("base64 utf-8 (lignes de 76), padding manquant toléré", () => {
+    const b64 = Buffer.from("Bonjour à tous — cordialement, Élodie", "utf8").toString("base64").replace(/=+$/, "");
+    const m = ["From: a@b.c", "Subject: x", "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: base64", "", b64.slice(0, 20), b64.slice(20), ""].join("\r\n");
+    expect(parseRawEmail(m).textBody).toBe("Bonjour à tous — cordialement, Élodie");
+  });
+
+  it("8bit en mode binaire : l'UTF-8 brut est relu comme UTF-8, le latin1 déclaré comme latin1", () => {
+    const utf8 = bin(["From: =?utf-8?Q?=C3=89lodie?= <e@x.be>", "Subject: x", "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: 8bit", "", "Prêt à partir à 8 h €"].join("\r\n"));
+    expect(parseRawEmail(utf8, { binary: true }).textBody).toBe("Prêt à partir à 8 h €");
+    const latin = bin(Buffer.concat([Buffer.from("From: a@b.c\r\nSubject: x\r\nContent-Type: text/plain; charset=iso-8859-1\r\nContent-Transfer-Encoding: 8bit\r\n\r\nd", "latin1"), Buffer.from([0xe9, 0x70, 0xf4, 0x74])]));
+    expect(parseRawEmail(latin, { binary: true }).textBody).toBe("dépôt");
+  });
+
+  it("windows-1252 et charset inconnu : repli sur UTF-8 sans lever", () => {
+    const w = bin(Buffer.concat([Buffer.from("From: a@b.c\r\nContent-Type: text/plain; charset=windows-1252\r\nContent-Transfer-Encoding: 8bit\r\n\r\n", "latin1"), Buffer.from([0x80, 0x20, 0x91, 0x61, 0x92])]));
+    expect(parseRawEmail(w, { binary: true }).textBody).toBe("€ ‘a’");
+    const unknown = ["From: a@b.c", "Content-Type: text/plain; charset=x-inconnu", "Content-Transfer-Encoding: quoted-printable", "", "H=C3=A9llo"].join("\r\n");
+    expect(parseRawEmail(unknown).textBody).toBe("Héllo");
+  });
+
+  it("en-tête en UTF-8 brut (non conforme) lu en mode binaire ; encoded-words repliés sur deux lignes", () => {
+    const m = bin(["From: José <j@x.be>", "Subject: =?utf-8?B?UsOpc2VydmF0aW9u?=", " =?utf-8?B?IMOpdMOp?=", "", "ok"].join("\r\n"));
+    const p = parseRawEmail(m, { binary: true });
+    expect(p.fromName).toBe("José");
+    expect(p.subject).toBe("Réservation été");
+  });
+});
+
+describe("parseRawEmail : structure MIME", () => {
+  it("multipart imbriqué : mixed > related > alternative ; pièce .txt jamais prise pour le corps", () => {
+    const m = [
+      "From: a@b.c", "Subject: x", 'Content-Type: multipart/mixed; boundary="OUT"', "",
+      "--OUT", 'Content-Type: multipart/related; boundary="REL"', "",
+      "--REL", 'Content-Type: multipart/alternative; boundary="ALT"', "",
+      "--ALT", "Content-Type: text/plain; charset=utf-8", "", "Le vrai texte.", "--ALT", "Content-Type: text/html; charset=utf-8", "", "<p>Le vrai texte.</p>", "--ALT--",
+      "--REL", 'Content-Type: image/png; name="logo.png"', "Content-ID: <logo>", "Content-Transfer-Encoding: base64", "", "iVBORw0KGgo=", "--REL--",
+      "--OUT", 'Content-Type: text/plain; name="liste.txt"', 'Content-Disposition: attachment; filename="liste.txt"', "", "CONTENU DE LA PIECE", "--OUT--", "",
+    ].join("\r\n");
+    const p = parseRawEmail(m);
+    expect(p.textBody).toBe("Le vrai texte.");
+    expect(p.attachments).toEqual([{ name: "logo.png", size: 8 }, { name: "liste.txt", size: 19 }]);
+  });
+
+  it("une ligne « --boundary » citée au milieu d'une phrase ne coupe rien ; le texte après la fermeture est ignoré", () => {
+    const m = [
+      "From: a@b.c", "Subject: x", 'Content-Type: multipart/mixed; boundary="BB"', "",
+      "preambule", "--BB", "Content-Type: text/plain", "", "voici --BB au milieu", "et la suite", "--BB--", "--BB", "Content-Type: text/plain", "", "épilogue piégé", "",
+    ].join("\r\n");
+    expect(parseRawEmail(m).textBody).toBe("voici --BB au milieu\net la suite");
+  });
+
+  it("message coupé avant la fin : le texte reçu est gardé, tailles de pièces inconnues", () => {
+    const m = ["From: a@b.c", "Subject: x", 'Content-Type: multipart/mixed; boundary="T"', "", "--T", "Content-Type: text/plain", "", "Début lisible",
+      "--T", 'Content-Type: application/pdf; name="devis.pdf"', "Content-Transfer-Encoding: base64", "", "JVBERi0xLjQK" + "A".repeat(100)].join("\r\n");
+    const p = parseRawEmail(m, { truncated: true });
+    expect(p.textBody).toBe("Début lisible");
+    expect(p.attachments).toEqual([{ name: "devis.pdf", size: null }]);
+    expect(p.truncated).toBe(true);
+  });
+
+  it("nom de pièce RFC 2231 (filename*=UTF-8''…) et encoded-word", () => {
+    const m = ["From: a@b.c", "Subject: x", 'Content-Type: multipart/mixed; boundary="Z"', "", "--Z", "Content-Type: text/plain", "", "voir pièce",
+      "--Z", "Content-Type: application/pdf", "Content-Disposition: attachment; filename*=UTF-8''r%C3%A9servation%20%E2%82%AC.pdf", "", "x", "--Z",
+      'Content-Type: application/pdf; name="=?utf-8?Q?Contrat_=C3=A9t=C3=A9.pdf?="', "", "y", "--Z--", ""].join("\r\n");
+    expect(parseRawEmail(m).attachments!.map((a) => a.name)).toEqual(["réservation €.pdf", "Contrat été.pdf"]);
+  });
+
+  it("paramètre coupé en segments (RFC 2231 : filename*0*=, filename*1*=, segments non encodés)", () => {
+    const m = ["From: a@b.c", "Subject: x", 'Content-Type: multipart/mixed; boundary="Z"', "", "--Z", "Content-Type: text/plain", "", "voir",
+      "--Z", "Content-Type: application/pdf", "Content-Disposition: attachment;", " filename*0*=UTF-8''Le%20contrat%20de%20location%20;", " filename*1*=%C3%A9t%C3%A9;", " filename*2=\".pdf\"", "", "x", "--Z--", ""].join("\r\n");
+    expect(parseRawEmail(m).attachments![0]!.name).toBe("Le contrat de location été.pdf");
+  });
+
+  it("segments RFC 2231 non contigus : la suite après le trou est ignorée", () => {
+    const m = ["From: a@b.c", "Subject: x", 'Content-Type: multipart/mixed; boundary="Z"', "", "--Z", "Content-Type: application/pdf",
+      "Content-Disposition: attachment; filename*0=\"debut\"; filename*2=\"fin.pdf\"", "", "x", "--Z--", ""].join("\r\n");
+    expect(parseRawEmail(m).attachments![0]!.name).toBe("debut");
+  });
+
+  it("profondeur MIME bornée : un multipart qui s'emboîte à l'infini ne boucle pas", () => {
+    let body = "Content-Type: text/plain\r\n\r\nfond";
+    for (let i = 0; i < 40; i++) body = `Content-Type: multipart/mixed; boundary="b${i}"\r\n\r\n--b${i}\r\n${body}\r\n--b${i}--`;
+    const p = parseRawEmail(`From: a@b.c\r\n${body}\r\n`);
+    expect(p.textBody).toBe(""); // trop profond : abandonné sans erreur
+  });
+
+  it("corps énorme : plafonné avec mention ; mail sans corps ni en-têtes : ne lève pas", () => {
+    const p = parseRawEmail(["From: a@b.c", "Subject: x", "", "y".repeat(50000)].join("\r\n"));
+    expect(p.textBody.length).toBeLessThan(20100);
+    expect(p.textBody).toMatch(/message tronqué/);
+    expect(() => parseRawEmail("")).not.toThrow();
+    expect(() => parseRawEmail("n'importe quoi\r\n\r\n")).not.toThrow();
+  });
+});
+
+describe("parseRawEmail : en-têtes de fil et sécurité", () => {
+  it("Message-ID, In-Reply-To, References, Date ; identifiants invalides écartés", () => {
+    const p = parseRawEmail(["From: a@b.c", "Subject: x", "Message-ID: <id1@srv>", "In-Reply-To: <parent@srv> (commentaire)", "References: <a@x>", " <b@x> pas-un-id <c@x>",
+      "Date: Tue, 06 Oct 2026 09:15:00 +0200", "", "t"].join("\r\n"));
+    expect(p.messageId).toBe("<id1@srv>");
+    expect(p.inReplyTo).toBe("<parent@srv>");
+    expect(p.references).toBe("<a@x> <b@x> <c@x>");
+    expect(p.date).toBe("2026-10-06T07:15:00.000Z");
+    expect(extractMessageIds("<a@x> <b@y>")).toEqual(["<a@x>", "<b@y>"]);
+    expect(extractMessageIds(null)).toEqual([]);
+  });
+
+  it("Authentication-Results : seul le premier, et seulement s'il vient de Google", () => {
+    const forged = ["From: a@b.c", "Authentication-Results: mx.google.com; dkim=fail", "Authentication-Results: mx.google.com; dkim=pass", "", "t"].join("\r\n");
+    expect(parseRawEmail(forged).senderAuthenticated).toBe(false);
+    const own = ["From: g@gmail.com", "Authentication-Results: mx.google.com; spf=pass; dkim=pass header.i=@gmail.com", "", "t"].join("\r\n");
+    expect(parseRawEmail(own).senderAuthenticated).toBe(true);
+    // DKIM valide mais signé par le domaine de l'attaquant, pas celui de l'adresse annoncée
+    const alien = ["From: g@gmail.com", "Authentication-Results: mx.google.com; dkim=pass header.d=attaquant.test header.s=x; spf=pass", "", "t"].join("\r\n");
+    expect(parseRawEmail(alien).senderAuthenticated).toBe(false);
+    // domaine parent aligné, ou DMARC (qui vérifie l'alignement lui-même)
+    expect(parseRawEmail(["From: g@mail.exemple.be", "Authentication-Results: mx.google.com; dkim=pass header.d=exemple.be", "", "t"].join("\r\n")).senderAuthenticated).toBe(true);
+    expect(parseRawEmail(["From: g@exemple.be", "Authentication-Results: mx.google.com; dkim=pass header.d=attaquant.test; dmarc=pass (p=NONE) header.from=exemple.be", "", "t"].join("\r\n")).senderAuthenticated).toBe(true);
+    const other = ["From: a@b.c", "Authentication-Results: mx.attaquant.test; dkim=pass", "", "t"].join("\r\n");
+    expect(parseRawEmail(other).senderAuthenticated).toBe(false);
+  });
+
+  it("expéditeur : adresse entre chevrons, nom entre guillemets, adresse nue, liste", () => {
+    expect(parseRawEmail('From: "Dupont, Jean" <Jean@Ex.com>\r\n\r\nx').from).toBe("jean@ex.com");
+    expect(parseRawEmail('From: "Dupont, Jean" <Jean@Ex.com>\r\n\r\nx').fromName).toBe("Dupont, Jean");
+    expect(parseRawEmail("From: nu@ex.com (Nu)\r\n\r\nx").from).toBe("nu@ex.com");
+  });
+});
+
+describe("htmlToText", () => {
+  it("liens avec cible visible, listes, entités numériques, scripts et styles retirés", () => {
+    const t = htmlToText('<style>p{color:red}</style><ul><li>un</li><li>deux&nbsp;&#233;&#x20AC;</li></ul><a href="https://a.test/x?y=1&amp;z=2">Cliquez</a> <a href="https://b.test">https://b.test</a><!-- caché --><script>alert(1)</script>');
+    expect(t).toContain("- un");
+    expect(t).toContain("- deux é€");
+    expect(t).toContain("Cliquez (https://a.test/x?y=1&z=2)");
+    expect(t).toContain("https://b.test");
+    expect(t).not.toMatch(/alert|color:red|caché/);
+  });
+
+  it("entité hors plage ou de contrôle : neutralisée", () => {
+    expect(htmlToText("a&#0;b&#1114112;c&#xD800;d")).toBe("a b c d");
   });
 });

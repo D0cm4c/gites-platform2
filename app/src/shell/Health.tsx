@@ -63,7 +63,7 @@ export function HealthStrip({ overviews, card }: { overviews: Overview[]; card?:
     <details className="health">
       <summary>
         <IconAlertTriangle size={22} />
-        {rows.length > 1 ? t`${rows.length} points à vérifier en coulisses` : t`1 point à vérifier en coulisses`}
+        {rows.length > 1 ? t`${rows.length} points à vérifier` : t`1 point à vérifier`}
       </summary>
       <ul>
         {rows.map((r) => (

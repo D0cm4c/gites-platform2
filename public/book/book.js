@@ -13,7 +13,7 @@
 import { cgvHtml } from "./cgv.js";
 import { mountPayment, paymentConfig } from "./pay-element.js";
 import { visionneuse } from "/galerie.js";
-import { apiHeaders, CGV_NOTE_NL, eur, LANG, LOCALE, mountLangSwitch, pl, t, translateStatic } from "./i18n.js";
+import { apiHeaders, CGV_NOTE_NL, eur, hour, LANG, LOCALE, mountLangSwitch, pl, t, translateStatic } from "./i18n.js";
 
 const params = new URLSearchParams(location.search);
 const PROPERTY = params.get("property");
@@ -359,7 +359,10 @@ async function renderCalendar() {
       d.arrivalDays != null ? arrivalLabel(d.arrivalDays) : "",
     ].filter(Boolean);
     const title = hints.length ? ` title="${esc(hints.join(" · "))}"` : "";
-    html += `<button type="button" class="${cls}" data-date="${d.date}"${title} ${d.past ? "disabled" : ""}>
+    const full = new Date(d.date + "T12:00:00Z").toLocaleDateString(LOCALE, { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+    const role = d.date === selIn ? `, ${t("arrivée")}` : d.date === selOut ? `, ${t("départ")}` : "";
+    const aria = ` aria-label="${esc(full + role + (d.past ? "" : d.available ? (d.minPrice != null ? ", " + sub : "") : ", " + t("complet")))}" aria-pressed="${isSel ? "true" : "false"}"`;
+    html += `<button type="button" class="${cls}" data-date="${d.date}"${title}${aria} ${d.past ? "disabled" : ""}>
       <span class="d">${Number(d.date.slice(8, 10))}</span><span class="p">${sub}</span>${mn}</button>`;
   }
   $("calGrid").innerHTML = html;
@@ -723,9 +726,9 @@ async function openBookingPanel(unitId) {
           <h3 id="step3Title" tabindex="-1">${t("Vos coordonnées")}</h3>
           <div class="formgrid">
             <div><label class="f" for="gFirst">${t("Prénom")}</label><input id="gFirst" autocomplete="given-name"></div>
-            <div><label class="f" for="gLast">${t("Nom *")}</label><input id="gLast" autocomplete="family-name"></div>
-            <div><label class="f" for="gEmail">${t("Email *")}</label><input id="gEmail" type="email" autocomplete="email" placeholder="${t("pour recevoir votre confirmation")}"></div>
-            <div><label class="f" for="gPhone">${t("Téléphone *")}</label><input id="gPhone" type="tel" autocomplete="tel" placeholder="${t("pour l'accueil sur place")}"></div>
+            <div><label class="f" for="gLast">${t("Nom *")}</label><input id="gLast" autocomplete="family-name" aria-describedby="eLast"><div class="field-msg" id="eLast" role="alert"></div></div>
+            <div><label class="f" for="gEmail">${t("Email *")}</label><input id="gEmail" type="email" inputmode="email" autocomplete="email" aria-describedby="eEmail" placeholder="${t("pour recevoir votre confirmation")}"><div class="field-msg" id="eEmail" role="alert"></div></div>
+            <div><label class="f" for="gPhone">${t("Téléphone (facultatif)")}</label><input id="gPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="${t("utile pour l'accueil le jour d'arrivée")}"></div>
           </div>
           <details class="fold"><summary>${t("Un message pour nous ? Un code promo ?")}</summary>
             <div class="row" style="margin-top:10px">
@@ -738,13 +741,17 @@ async function openBookingPanel(unitId) {
             <fieldset class="paychoices"><legend class="sr-only">${t("Montant à payer maintenant")}</legend>${payChoices.join("")}</fieldset>
             <div class="cards">${t("Bancontact · Visa · Mastercard — aucun montant n'est débité sans confirmation.")}</div>
           </div>
-          <div class="agree"><label class="small" id="cgvLabel"><input type="checkbox" id="gCgv" aria-describedby="cgvMsg"> ${t('J\'accepte les <a href="#" id="cgvLink">conditions générales et le contrat de location</a> *')}</label>
+          <div class="agree"><label class="small" id="cgvLabel"><input type="checkbox" id="gCgv" aria-describedby="cgvMsg"> ${t('J\'accepte les <a href="#" id="cgvLink">conditions générales</a> *')}</label>
           <div id="cgvMsg" class="field-msg" role="alert"></div>
           <div id="cgvBox" class="cgv-box" style="display:none"></div>
           <label class="small optin"><input type="checkbox" id="gOptin"> ${t('Tenez-moi au courant des disponibilités et offres par email <span class="muted">(facultatif, désinscription à tout moment)</span>')}</label></div>
           ${TURNSTILE_KEY ? `<div id="turnstileBox" class="turnstile"></div><div id="turnstileMsg" class="field-msg" role="alert"></div>` : ""}
           <div id="bookMsg" role="alert" aria-live="assertive"></div>
           <button class="btn big" id="bPay" style="margin-top:14px" disabled>${t("Payer et réserver")}</button>
+          <div class="next"><h4>${t("Et ensuite ?")}</h4><ol>
+            <li>${t("Vous payez en ligne, sur cette page (Bancontact, Visa, Mastercard).")}</li>
+            <li>${t("Vous recevez dans quelques minutes un e-mail de confirmation, avec votre récapitulatif et les conditions générales. Son objet commence par la référence de votre réservation.")}</li>
+            <li>${t("Une question ? Répondez simplement à cet e-mail : pas de chat, nous vous répondons par e-mail.")}</li></ol></div>
           <p class="reassure">${t('Votre créneau est bloqué <b id="holdMin">30</b> minutes le temps du paiement. Réservation ferme dès paiement — pas de droit de rétractation pour les hébergements datés (art. VI.53, 12° CDE) ; conditions d\'annulation dans les CGV.')}</p>
         </div>
         <!-- Étape 4 : le formulaire de paiement s'y monte SANS quitter la page
@@ -757,7 +764,7 @@ async function openBookingPanel(unitId) {
         <div class="card sum">
           <b class="sum-unit">${esc(SELECTED.name)}</b>
           <p class="small muted sum-stay">${t("Du {du} au {au}", { du: dfr(SEARCH.checkin), au: dfr(SEARCH.checkout) })} · ${pl(SEARCH.adults, "adulte", "adultes")}${SEARCH.children ? ` + ${pl(SEARCH.children, "enfant", "enfants")}` : ""}<br>
-          ${t("Arrivée dès {arr} · départ avant {dep}", { arr: esc(PROP.settings.checkinTime), dep: esc(PROP.settings.checkoutTime) })} · <a href="#" id="editDates">${t("modifier")}</a></p>
+          ${t("Arrivée dès {arr} · départ avant {dep}", { arr: esc(hour(PROP.settings.checkinTime)), dep: esc(hour(PROP.settings.checkoutTime)) })} · <a href="#" id="editDates">${t("modifier")}</a></p>
           <div id="quoteZone" class="small muted" aria-live="polite" aria-atomic="true">${t("Calcul du devis…")}</div>
         </div>
       </aside>
@@ -769,7 +776,7 @@ async function openBookingPanel(unitId) {
     btn.addEventListener("click", () => {
       const on = btn.classList.toggle("on");
       btn.setAttribute("aria-pressed", on ? "true" : "false");
-      btn.textContent = on ? "✓ Ajouté" : "+ Ajouter";
+      btn.textContent = on ? t("✓ Ajouté") : t("+ Ajouter");
       refreshQuote();
     }),
   );
@@ -797,13 +804,16 @@ async function openBookingPanel(unitId) {
           // L'article 4.1 renvoie au « pourcentage affiché lors de la
           // réservation » : on le lui donne, pour cet hébergement-ci.
           `<p class="cgv-h"><b>${t("Pour {nom}, le pourcentage d'arrhes de l'article 4.1 est de {pct} %.", { nom: esc(SELECTED.name), pct: depositPct })}</b></p>`
-        : `<p>${t("Les conditions générales et le contrat de location complets sont joints à la confirmation de réservation et consultables à tout moment sur votre voucher en ligne.")}</p>`;
+        : `<p>${t("Les conditions générales complètes sont jointes à la confirmation de réservation et consultables à tout moment sur votre voucher en ligne.")}</p>`;
     }
   });
   $("gCgv").addEventListener("change", () => {
     if ($("gCgv").checked) clearCgvError();
     payButtonRefresh();
   });
+  for (const [id, zone] of [["gLast", "eLast"], ["gEmail", "eEmail"]]) {
+    $(id).addEventListener("input", () => { $(id).removeAttribute("aria-invalid"); $(zone).textContent = ""; });
+  }
   $("bPay").addEventListener("click", submitBooking);
   $("mbPay").onclick = submitBooking;
   // Le passage à l'étape 3 est le plus souvent AUTOMATIQUE (auto-sélection du
@@ -838,7 +848,7 @@ function payButtonRefresh() {
   const label = t("Payer {montant} et réserver", { montant: eur(amount) });
   $("bPay").textContent = label;
   $("mbAmount").textContent = eur(amount);
-  $("mbLabel").textContent = mode === "full" || QUOTE.balanceDueDate == null ? "Totalité" : "Arrhes";
+  $("mbLabel").textContent = mode === "full" || QUOTE.balanceDueDate == null ? t("Totalité") : t("Arrhes");
   $("mobileBar").style.display = "flex";
 }
 
@@ -858,6 +868,10 @@ async function refreshQuote() {
   if (!SELECTED) return;
   const seq = ++quoteSeq;
   const zone = $("quoteZone");
+  // Le montant affiché n'est plus celui que le serveur facturerait : on ferme
+  // le paiement le temps du recalcul (sinon « Payer X € » partirait avec Y €).
+  QUOTE = null;
+  payButtonRefresh();
   try {
     const { quote } = await api("/api/public/quote", {
       unitId: SELECTED.id,
@@ -906,16 +920,6 @@ async function submitBooking() {
   const msg = $("bookMsg");
   msg.innerHTML = "";
   clearCgvError();
-  // Refus attaché à SA case : message à côté d'elle et focus posé dessus —
-  // même comportement sur mobile et sur desktop (issue #41).
-  if (!$("gCgv").checked) {
-    $("cgvMsg").textContent = t("Cochez cette case pour continuer : c'est l'acceptation du contrat de location.");
-    $("gCgv").setAttribute("aria-invalid", "true");
-    $("cgvLabel").classList.add("err");
-    $("gCgv").focus({ preventScroll: true });
-    $("cgvLabel").scrollIntoView({ behavior: "smooth", block: "center" });
-    return;
-  }
   const tsMsg = $("turnstileMsg");
   if (tsMsg) tsMsg.textContent = "";
   const captcha = turnstileToken();
@@ -929,9 +933,26 @@ async function submitBooking() {
   const lastName = $("gLast").value.trim();
   const email = $("gEmail").value.trim();
   const phone = $("gPhone").value.trim();
-  if (lastName.length < 2 || !email || !phone) {
-    msg.innerHTML = `<div class="note bad">${t("Nom, email et téléphone sont nécessaires — la confirmation part par email et nous vous accueillons par téléphone.")}</div>`;
-    $("guestCard").scrollIntoView({ behavior: "smooth", block: "center" });
+  // Chaque refus se lit SOUS son champ, et le focus y va : jamais un bandeau
+  // générique en bas de page qui ne dit pas quel champ corriger.
+  const bad = [];
+  if (lastName.length < 2) bad.push(["gLast", "eLast", t("Indiquez votre nom (2 lettres au moins).")]);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) bad.push(["gEmail", "eEmail", email ? t("Cette adresse e-mail ne semble pas complète (exemple : nom@exemple.be).") : t("Indiquez votre e-mail : c'est là que part votre confirmation.")]);
+  for (const id of ["gLast", "gEmail"]) { $(id).removeAttribute("aria-invalid"); $(id === "gLast" ? "eLast" : "eEmail").textContent = ""; }
+  if (bad.length) {
+    for (const [id, zone, text] of bad) { $(id).setAttribute("aria-invalid", "true"); $(zone).textContent = text; }
+    $(bad[0][0]).focus({ preventScroll: true });
+    $(bad[0][0]).scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+  // Refus attaché à SA case : message à côté d'elle et focus posé dessus —
+  // même comportement sur mobile et sur desktop (issue #41).
+  if (!$("gCgv").checked) {
+    $("cgvMsg").textContent = t("Cochez cette case pour continuer : c'est l'acceptation des conditions générales.");
+    $("gCgv").setAttribute("aria-invalid", "true");
+    $("cgvLabel").classList.add("err");
+    $("gCgv").focus({ preventScroll: true });
+    $("cgvLabel").scrollIntoView({ behavior: "smooth", block: "center" });
     return;
   }
   setStep(4);
@@ -1004,13 +1025,16 @@ async function submitBooking() {
  *  en exception : `submitBooking` remet l'étape 3 et affiche le message, le
  *  hold restant récupérable depuis le bandeau de décompte. */
 async function showPaymentElement(payment, amountCents) {
-  const cfg = await paymentConfig();
-  if (!cfg.enabled || !cfg.publishableKey) {
+  // La clé publiable vient du serveur AVEC le paiement : un compte Stripe par
+  // propriété, donc la clé du compte qui a créé ce PaymentIntent. L'ancien point
+  // /payment-config reste le repli (réponses d'un serveur plus ancien).
+  const publishableKey = payment.publishableKey || (await paymentConfig()).publishableKey;
+  if (!publishableKey) {
     throw new Error(t("Le paiement en ligne est momentanément indisponible — nous pouvons finaliser votre réservation avec vous, écrivez-nous."));
   }
   const card = $("payCard");
   await mountPayment(card, {
-    publishableKey: cfg.publishableKey,
+    publishableKey,
     clientSecret: payment.clientSecret,
     returnUrl: payment.returnUrl,
     amountLabel: eur(amountCents ?? payment.amountCents),
@@ -1181,21 +1205,48 @@ async function initFlow() {
   $("qCh").addEventListener("change", onSelectionChange);
 
   // question avant réservation → boîte Messages de la plateforme
+  const where = PROP.property.contactEmail;
+  $("cWhere").textContent = where
+    ? t("Votre message est envoyé à l'équipe des gîtes ({adresse}). Vous recevez la réponse par e-mail, à l'adresse que vous indiquez ici.", { adresse: where })
+    : t("Votre message est envoyé à l'équipe des gîtes. Vous recevez la réponse par e-mail, à l'adresse que vous indiquez ici.");
   $("cSend").addEventListener("click", async () => {
     const note = $("cNote");
+    note.className = "small";
     note.textContent = "";
+    for (const id of ["cName", "cEmail", "cMsg"]) $(id).removeAttribute("aria-invalid");
+    const name = $("cName").value.trim(), mail = $("cEmail").value.trim(), msg = $("cMsg").value.trim();
+    const miss = name.length < 2 ? "cName" : !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(mail) ? "cEmail" : msg.length < 5 ? "cMsg" : null;
+    if (miss) {
+      $(miss).setAttribute("aria-invalid", "true");
+      note.className = "field-msg";
+      note.textContent = miss === "cName" ? t("Indiquez votre nom.") : miss === "cEmail" ? t("Indiquez une adresse e-mail complète : c'est là que nous répondons.") : t("Écrivez votre question (quelques mots suffisent).");
+      $(miss).focus();
+      return;
+    }
+    $("cSend").disabled = true;
     try {
-      await api("/api/public/contact", {
-        property: PROPERTY,
-        name: $("cName").value,
-        email: $("cEmail").value,
-        message: $("cMsg").value,
-        website: $("cWebsite").value, // pot de miel
-      });
+      const r = await api("/api/public/contact", { property: PROPERTY, name, email: mail, message: msg, lang: LANG, website: $("cWebsite").value });
       $("cMsg").value = "";
-      note.textContent = t("✅ Question envoyée — nous vous répondons par email au plus vite.");
+      const ok = $("cOk");
+      ok.hidden = false;
+      // textContent : le message du client est repris à l'écran sans jamais
+      // passer par innerHTML.
+      ok.textContent = "";
+      const h = document.createElement("b");
+      h.textContent = t("✅ Message envoyé — référence {ref}", { ref: r.reference ?? "" });
+      const p1 = document.createElement("p");
+      p1.textContent = r.ackSent
+        ? t("Vous recevez à l'instant un e-mail de confirmation à {email}. Nous vous répondons par e-mail, à la même adresse.", { email: mail })
+        : t("Nous vous répondons par e-mail, à {email}.", { email: mail });
+      const q = document.createElement("blockquote");
+      q.textContent = msg;
+      ok.append(h, p1, q);
+      ok.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (e) {
+      note.className = "field-msg";
       note.textContent = e.message;
+    } finally {
+      $("cSend").disabled = false;
     }
   });
 

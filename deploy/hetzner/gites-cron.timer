@@ -1,0 +1,11 @@
+# Rôle : déclenche gites-cron.service toutes les 15 minutes (à l'heure pile, :15, :30, :45).
+[Unit]
+Description=Traitement planifié des gîtes, toutes les 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+AccuracySec=10s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

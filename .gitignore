@@ -19,6 +19,9 @@
 # disparaître le schéma du dépôt.
 data/
 sauvegardes/
+# Exports des agendas Google de papa (noms, adresses, montants) : dans le vault
+# (🏠 Privé/Plateforme Gestion Gîtes/_initial/), jamais dans le dépôt.
+scripts/agenda-google/
 backups/
 *.db
 *.db-shm

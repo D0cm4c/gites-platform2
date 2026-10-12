@@ -123,7 +123,7 @@ describe("fiche domaine et disponibilité", () => {
 });
 
 describe("parcours de réservation complet (mode stub)", () => {
-  it("réserve, paie l'acompte, confirme, journalise le voucher, bloque la liaison", async () => {
+  it("réserve, paie l'acompte, confirme, journalise la confirmation, bloque la liaison", async () => {
     // 1. Création → hold + URL de paiement stub
     const created = await call("POST", "/api/public/bookings", bookingBody(2));
     expect(created.status).toBe(201);
@@ -169,7 +169,7 @@ describe("parcours de réservation complet (mode stub)", () => {
     // 5. Voucher journalisé en stub (aucun envoi réel)
     const emails = await call("GET", "/api/admin/email-log");
     const kinds = (emails.data.emails as { kind: string; status: string }[]).map((e) => [e.kind, e.status].join(":"));
-    expect(kinds).toContain("voucher:stub");
+    expect(kinds).toContain("confirmation:stub");
 
     // 6. Doubles réservations rejetées (même unité, puis Domaine via liaison)
     expect((await call("POST", "/api/public/bookings", bookingBody(2, { guest: { ...GUEST, email: "x@y.be" } }))).status).toBe(409);
@@ -190,7 +190,7 @@ describe("parcours de réservation complet (mode stub)", () => {
 });
 
 describe("admin", () => {
-  it("vente manuelle confirmée + lien de paiement stub + annulation → libération", async () => {
+  it("vente du back-office = option (jamais confirmée d'office) + lien de paiement stub + annulation → libération", async () => {
     const sale = await call("POST", "/api/admin/bookings", {
       unitId: 1,
       checkin: CHECKIN,
@@ -202,8 +202,9 @@ describe("admin", () => {
     });
     expect(sale.status).toBe(201);
     const booking = sale.data.booking as Record<string, unknown>;
-    expect(booking.status).toBe("confirmed");
+    expect(booking.status).toBe("pending"); // décision du 11/10/2026 : le client confirme en payant les arrhes
     expect(sale.data.paymentUrl as string).toContain("dev-pay.html");
+    expect(sale.data.optionUrl as string).toContain("/book/voucher.html?ref=");
 
     // le Domaine est bloqué par liaison
     const avail = await call("GET", `/api/public/availability?property=pre-more&checkin=${CHECKIN}&checkout=${CHECKOUT}&adults=4`);
@@ -241,10 +242,12 @@ describe("admin", () => {
 
   it("stats et overview répondent avec une forme cohérente", async () => {
     const year = Number(CHECKIN.slice(0, 4));
-    await call("POST", "/api/admin/bookings", {
+    const wedding = await call("POST", "/api/admin/bookings", {
       unitId: 3, checkin: CHECKIN, checkout: CHECKOUT, adults: 15,
       guest: { lastName: "Mariage Dubois" },
     });
+    // le back-office crée une option : la confirmation se fait à part
+    expect((await call("POST", `/api/admin/bookings/${(wedding.data.booking as { id: number }).id}/confirm`)).status).toBe(200);
     const stats = await call("GET", `/api/admin/stats?property=1&year=${year}`);
     expect(stats.status).toBe(200);
     const current = stats.data.current as { soldNights: number; occupancyPct: number; perUnit: { nights: number }[] };
@@ -278,6 +281,7 @@ describe("admin", () => {
     });
     expect(sale.status).toBe(201);
     const booking = sale.data.booking as { id: number; reference: string };
+    expect((await call("POST", `/api/admin/bookings/${booking.id}/confirm`)).status).toBe(200);
 
     // Option en cours sur une autre unité et d'autres dates → alerte « option ».
     const hold = await call(
@@ -346,7 +350,7 @@ describe("admin", () => {
     const emails = fiche.data.emails as {
       kind: string; toEmail: string; status: string; createdAt: string; errorDetail: string | null;
     }[];
-    const voucher = emails.find((e) => e.kind === "voucher");
+    const voucher = emails.find((e) => e.kind === "confirmation");
     expect(voucher).toBeDefined();
     expect(voucher!.toEmail).toBe("mertens@example.com");
     // EMAILS_ENABLED=false : journalisé, donc RIEN n'est parti — la fiche doit
@@ -391,7 +395,7 @@ describe("admin", () => {
     const nu: Env = { ...env, ADMIN_TOKEN: undefined };
     expect((await call("POST", "/api/admin/login", { user: "secours", password: "x" }, {}, nu)).status).toBe(401);
     // et le compte initial de 0027 ouvre avec son mot de passe provisoire
-    expect((await call("POST", "/api/admin/login", { user: "julien", password: "gites-2026" }, {}, nu)).status).toBe(200);
+    expect((await call("POST", "/api/admin/login", { user: "julien", password: "premore-2026" }, {}, nu)).status).toBe(200); // migration 0033
   });
 
   it("comptes en base : création → login avec session → reset/désactivation coupent tout", async () => {

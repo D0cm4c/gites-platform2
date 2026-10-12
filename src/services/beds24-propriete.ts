@@ -48,11 +48,12 @@ import {
   type UnitRow,
 } from "../db/repo";
 import { pushedPriceCents } from "../core/price-guardrails";
-import { ADRESSE_VITRINE, HOUSE_RULES, PROPERTY_A_COMPLETER, PROPERTY_DESCRIPTION, unitContent } from "../core/beds24-contenu";
+import { ADRESSE_VITRINE, HOUSE_RULES, PROPERTY_DESCRIPTION, PROPERTY_FEATURE_CODES, unitContent } from "../core/beds24-contenu";
 import { resolvePushMarkup } from "./beds24-sync";
 import {
   Beds24Error,
   beds24Fetch,
+  motifText,
   beds24ListProperties,
   beds24Status,
   beds24WritesAllowed,
@@ -93,7 +94,7 @@ export interface RoomPlan {
   /** Frais de ménage (« frais généraux ») de l'hébergement, en euros. */
   cleaningFee?: number;
   description?: string;
-  featureCodes: string[];
+  featureCodes: string[][];
   photos: PhotoPlan[];
   aCompleter: string[];
 }
@@ -117,6 +118,8 @@ export interface PropertyPlan {
   rooms: RoomPlan[];
   /** Unités actives laissées en vente directe (non créées chez Beds24). */
   directOnly: { unitId: number; name: string; raison: string }[];
+  /** featureCodes de la propriété (une ligne par tableau). */
+  featureCodes: string[][];
   /** Ce que l'API ne prend pas ou que nos données ne disent pas. */
   aCompleter: string[];
 }
@@ -202,7 +205,7 @@ export async function buildPropertyPlan(db: D1Database, propertyId: number, publ
       name: u.name,
       qty: 1,
       roomType: ROOM_TYPE,
-      maxPeople: Math.max(1, u.capacityMax),
+      maxPeople: Math.max(1, content?.capacite ?? u.capacityMax),
       ...(rule && rule.minNights >= 1 ? { minStay: Math.min(rule.minNights, 365) } : {}),
       ...(euros(rack) != null ? { rackRate: euros(rack) } : {}),
       ...(euros(u.cleaningFeeCents) != null ? { cleaningFee: euros(u.cleaningFeeCents) } : {}),
@@ -226,7 +229,6 @@ export async function buildPropertyPlan(db: D1Database, propertyId: number, publ
   if (!checkInStart || !checkOutEnd) aCompleter.push("Heures d'arrivée/départ : réglage absent ou hors quart d'heure");
   if (!clean(property.contactEmail)) aCompleter.push("E-mail de contact : absent ou provisoire (TODO) dans notre base");
   if (!phone) aCompleter.push("Téléphone de contact : absent de notre base");
-  aCompleter.push(...PROPERTY_A_COMPLETER);
 
   return {
     propertyId: property.id,
@@ -244,6 +246,7 @@ export async function buildPropertyPlan(db: D1Database, propertyId: number, publ
     checkOutEnd,
     description: PROPERTY_DESCRIPTION,
     houseRules: HOUSE_RULES,
+    featureCodes: PROPERTY_FEATURE_CODES.map((l) => [...l]),
     rooms,
     directOnly: units
       .filter((u) => u.active && u.isComposite)
@@ -478,7 +481,7 @@ function responseMessages(data: unknown): string[] {
       if (!Array.isArray(list)) continue;
       for (const m of list) {
         const o = (m && typeof m === "object" ? m : {}) as Record<string, unknown>;
-        const text = typeof o.message === "string" ? o.message : JSON.stringify(m);
+        const text = motifText(m);
         const label = key === "errors" ? "erreur" : key === "warnings" ? "avertissement" : "info";
         out.push(`${label} Beds24${typeof o.field === "string" && o.field ? ` (${o.field})` : ""} : ${text}`);
       }
@@ -497,6 +500,7 @@ function sentSummary(plan: PropertyPlan) {
       ...(plan.checkInStart ? [`arrivée dès ${plan.checkInStart}`] : []),
       ...(plan.checkOutEnd ? [`départ avant ${plan.checkOutEnd}`] : []),
       "description", "règlement intérieur",
+      ...(plan.featureCodes.length ? ["équipements (featureCodes)"] : []),
     ],
     rooms: plan.rooms.map((r) => ({
       unitId: r.unitId,
@@ -507,7 +511,7 @@ function sentSummary(plan: PropertyPlan) {
         ...(r.rackRate != null ? [`prix de base ${r.rackRate} ${plan.currency}`] : []),
         ...(r.cleaningFee != null ? [`ménage ${r.cleaningFee} ${plan.currency}`] : []),
         ...(r.description ? ["description"] : []),
-        ...(r.featureCodes.length ? [`équipements : ${r.featureCodes.join(", ")}`] : []),
+        ...(r.featureCodes.length ? [`équipements : ${r.featureCodes.map((l) => l.join(" ")).filter(Boolean).join(" | ")}`] : []),
       ],
     })),
   };
@@ -802,13 +806,15 @@ async function finishContent(
         {
           id: prop.id,
           texts: [{ language: LANGUE, propertyDescription: plan.description, houseRules: plan.houseRules }],
+          ...(plan.featureCodes.length ? { featureCodes: plan.featureCodes } : {}),
           roomTypes: rooms.map((r) => {
             const p = plan.rooms.find((x) => x.unitId === r.unitId)!;
             return {
               id: r.beds24RoomId,
               ...(p.description ? { texts: [{ language: LANGUE, roomDescription: p.description }] } : {}),
-              // Une ligne de codes : forme du champ « Features » (wiki Beds24).
-              ...(p.featureCodes.length ? { featureCodes: [p.featureCodes] } : {}),
+              // featureCodes : tableau de tableaux (apiV2.yaml, schémas property et room).
+              // Une ligne par tableau, comme le champ « Features » de l'écran Beds24.
+              ...(p.featureCodes.length ? { featureCodes: p.featureCodes } : {}),
             };
           }),
         },

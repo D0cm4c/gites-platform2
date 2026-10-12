@@ -3,3 +3,7 @@
 .src.canal-airbnb { background: var(--danger-soft); color: var(--ink); }
 .src.canal-booking { background: var(--ourthe-soft); color: var(--ink); }
 .src.canal-autre { background: var(--myrt-soft); color: var(--ink); }
+.src.canal-vrbo { background: var(--pine-soft); color: var(--ink); }
+.src.warn { background: var(--danger-soft); color: var(--ink); }
+.attach { margin: 6px 0 0; padding: 0; list-style: none; font-size: 14px; color: var(--ink-2); }
+.warnline { margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; background: var(--danger-soft); color: var(--ink); }

@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 
 import { openDatabase, snapshotSqlite } from "./sqlite-d1.mjs";
 import { applyMigrations } from "./migrate.mjs";
+import { imapConfigFromEnv, imapTransport } from "./imap.mjs";
 import { smtpConfigFromEnv, smtpTransport } from "./smtp.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -93,6 +94,14 @@ const env = {
   SMTP_PASSWORD: process.env.SMTP_PASSWORD,
   MAIL_FROM: process.env.MAIL_FROM,
   SMTP_SEND: smtpConfigFromEnv() ? smtpTransport(smtpConfigFromEnv()) : undefined,
+  // Relève de la boîte de contact (Gmail, IMAP) : actif quand IMAP_USER et un mot de
+  // passe (IMAP_PASSWORD, sinon SMTP_PASSWORD) sont posés — cf. node/imap.mjs et
+  // src/services/mailbox.ts. Lecture seule : la boîte n'est jamais modifiée.
+  IMAP_HOST: process.env.IMAP_HOST,
+  IMAP_PORT: process.env.IMAP_PORT,
+  IMAP_USER: process.env.IMAP_USER,
+  IMAP_PASSWORD: process.env.IMAP_PASSWORD,
+  IMAP_FETCH: imapConfigFromEnv() ? imapTransport(imapConfigFromEnv()) : undefined,
   // Instantané de la base pour GET /api/admin/export.sqlite (Node seulement).
   SQLITE_SNAPSHOT: async () => snapshotSqlite(db, dirname(resolve(SQLITE_PATH))),
   ADMIN_ALLOWED_IPS: process.env.ADMIN_ALLOWED_IPS,
@@ -127,6 +136,7 @@ const { Router, apiError } = await import("../dist/api/router.js");
 const { registerPublicRoutes } = await import("../dist/api/public.js");
 const { registerAdminRoutes } = await import("../dist/api/admin.js");
 const { runAllScheduled } = await import("../dist/jobs/scheduled.js");
+const { pullMailbox } = await import("../dist/services/mailbox.js");
 const { adminIpCheck, adminIpGate, ipDeniedResponse, markIpDenied } = await import("../dist/core/ip-allow.js");
 const { adminAddressRedirect } = await import("../dist/core/admin-redirect.js");
 const { localizePublicResponse } = await import("../dist/core/public-i18n.js");
@@ -400,9 +410,21 @@ server.listen(PORT, () => {
   console.log(`[gites] photos : ${UPLOADS_DIR}`);
   console.log(`[gites] beds24 : écritures ${env.BEDS24_WRITE_ENABLED === "true" ? "ACTIVES" : "FERMÉES (BEDS24_WRITE_ENABLED ≠ true)"}`);
   console.log(`[gites] admin  : ${(env.ADMIN_ALLOWED_IPS || "").trim() ? `réservé à ${env.ADMIN_ALLOWED_IPS}${TRUST_PROXY ? " (via X-Forwarded-For)" : ""}` : "ouvert à toute adresse"}`);
+  console.log(`[gites] boîte  : ${env.IMAP_FETCH ? `relève IMAP ${env.IMAP_USER} @ ${env.IMAP_HOST || "imap.gmail.com"} (lecture seule)` : "relève IMAP inactive (IMAP_USER / mot de passe absents)"}`);
   if (!env.ADMIN_TOKEN) console.warn("[gites] ⚠️ ADMIN_TOKEN absent — le back-office refusera tout (garde fail-closed)");
   if (!CRON_KEY) console.warn("[gites] ⚠️ CRON_KEY absente — /internal/cron est désactivé");
 });
+
+// Filet entre deux passages du cron (15 min) : la boîte de contact est relevée toutes les
+// MAILBOX_POLL_MINUTES (10 par défaut, 0 = seulement au cron). Sans danger de doublon : le
+// curseur UID et le Message-ID rendent la relève idempotente, et un verrou évite deux
+// relèves à la fois. Le minuteur n'empêche pas le processus de s'arrêter.
+const mailboxEvery = Number(process.env.MAILBOX_POLL_MINUTES ?? 10);
+if (env.IMAP_FETCH && Number.isFinite(mailboxEvery) && mailboxEvery >= 1) {
+  setInterval(() => {
+    pullMailbox(env).catch((e) => console.error("[boîte]", e instanceof Error ? e.message : e));
+  }, Math.round(mailboxEvery * 60_000)).unref();
+}
 
 for (const signal of ["SIGTERM", "SIGINT"]) {
   process.on(signal, () => {

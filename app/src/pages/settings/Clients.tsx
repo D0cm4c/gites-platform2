@@ -37,7 +37,7 @@ export function ClientsPage() {
       {list.data && list.data.length === 0 ? <Empty title={q ? t`Aucun client ne correspond à « ${q} »` : t`Aucun client pour l'instant`} /> : null}
       {list.data && list.data.length ? (
         <div className="tbl-wrap">
-          <table className="tbl dense rows-link">
+          <table className="tbl dense rows-link mcards">
             <caption className="sr">{t`Clients`}</caption>
             <thead>
               <tr>
@@ -51,16 +51,16 @@ export function ClientsPage() {
             <tbody>
               {list.data.map((g) => (
                 <tr key={g.id} onClick={() => setOpen(g.id)}>
-                  <td>
+                  <td className="mc-t">
                     <button type="button" className="cell-link" onClick={(e) => (e.stopPropagation(), setOpen(g.id))}>
                       {fullName(g) || t`Client sans nom`}
                     </button>
                     <small className="show-s-inline">{[g.email, g.phone].filter(Boolean).join(", ")}</small>
                   </td>
-                  <td className="hide-s">{g.email || "—"}</td>
-                  <td className="hide-s nowrap">{g.phone || "—"}</td>
-                  <td className="r">{g.bookingsCount ?? 0}</td>
-                  <td className="r amt">{eur(g.totalSpentCents ?? 0)}</td>
+                  <td className="hide-s mc-off">{g.email || "—"}</td>
+                  <td className="hide-s nowrap mc-off">{g.phone || "—"}</td>
+                  <td className="r mc-off">{g.bookingsCount ?? 0}</td>
+                  <td className="r amt mc-r">{eur(g.totalSpentCents ?? 0)}</td>
                 </tr>
               ))}
             </tbody>

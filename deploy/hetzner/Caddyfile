@@ -1,0 +1,38 @@
+# Rôle : reverse proxy HTTPS des gîtes (Caddy), installé en /etc/caddy/Caddyfile par installer.sh.
+# Journaux : journald (journalctl -u caddy).
+# Usage : installer.sh remplace __DOMAIN__ par le ou les domaines (« a.exemple.be, b.exemple.be »).
+# TLS : certificat Let's Encrypt automatique, dès que le DNS du domaine pointe sur le serveur.
+
+__DOMAIN__ {
+	encode zstd gzip
+
+	# Une photo de 8 Mo plus son enveloppe (le serveur refuse au-delà de 9 Mo).
+	request_body {
+		max_size 12MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# Caddy écrase X-Forwarded-For par l'adresse réelle du client (TRUST_PROXY=true côté Node).
+	reverse_proxy 127.0.0.1:8787
+}
+
+# Accès par l'adresse IP (aucun nom), en HTTP simple : la sonde seulement. Le back-office et
+# l'API ne passent JAMAIS en clair (jetons) : pour eux, le domaine, ou un tunnel SSH
+# (ssh -L 8787:127.0.0.1:8787 claude@<ip>). Un nom déclaré plus haut a priorité et part en HTTPS.
+http:// {
+	@sonde path /api/public/health /internal/health
+	handle @sonde {
+		reverse_proxy 127.0.0.1:8787
+	}
+	handle {
+		respond "Utiliser le nom de domaine (HTTPS)." 403
+	}
+}

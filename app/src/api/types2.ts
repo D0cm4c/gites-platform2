@@ -176,6 +176,7 @@ export interface IcalFeed {
   name: string;
   url: string;
   active: boolean;
+  departureDayIncluded: boolean;
   lastSyncAt: string | null;
   lastStatus: string | null;
 }
@@ -437,7 +438,7 @@ export interface Beds24PropertyPlan {
   country: string;
   checkInStart?: string;
   checkOutEnd?: string;
-  rooms: { unitId: number; name: string; maxPeople: number; minStay?: number; rackRate?: number; cleaningFee?: number; description?: string; featureCodes: string[]; photos: { url: string; legende: string }[] }[];
+  rooms: { unitId: number; name: string; maxPeople: number; minStay?: number; rackRate?: number; cleaningFee?: number; description?: string; featureCodes: string[][]; photos: { url: string; legende: string }[] }[];
   directOnly: { unitId: number; name: string; raison: string }[];
   aCompleter: string[];
 }
@@ -460,4 +461,60 @@ export interface ServiceKey {
   createdBy: string | null;
   lastUsedAt: string | null;
   revokedAt: string | null;
+}
+
+/** Réglages › Comptes Stripe : l'état d'une propriété. Aucune clé en clair, jamais. */
+export interface StripeKeyState {
+  set: boolean;
+  setAt: string | null;
+  /** « …ab12 » : les quatre derniers caractères, pour reconnaître la clé. */
+  hint: string | null;
+}
+export interface StripeProperty {
+  propertyId: number;
+  name: string;
+  slug: string;
+  mode: "test" | "live";
+  accountLabel: string | null;
+  secret: StripeKeyState;
+  publishable: StripeKeyState;
+  webhook: StripeKeyState;
+  /** Ce que le serveur utilise vraiment : les clés de la propriété, le repli (environnement), ou rien (simulateur). */
+  effective: "property" | "env" | "none";
+  webhookPath: string;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+export interface StripeSettings {
+  baseUrl: string;
+  events: string[];
+  envFallback: { secret: boolean; publishable: boolean; webhook: boolean; mode: "test" | "live" | null };
+  properties: StripeProperty[];
+}
+
+export interface Encaissement {
+  paymentId: number;
+  receivedAt: string;
+  bookingId: number;
+  bookingReference: string;
+  kind: string;
+  amountCents: number;
+  feeCents: number | null;
+  netCents: number | null;
+  status: string;
+  stripeRef: string | null;
+}
+export interface EncaissementMonth {
+  month: string;
+  count: number;
+  grossCents: number;
+  feeCents: number;
+  netCents: number;
+  unknownFees: number;
+}
+export interface EncaissementsReport {
+  propertyId: number;
+  rows: Encaissement[];
+  months: EncaissementMonth[];
+  totals: { count: number; grossCents: number; feeCents: number; netCents: number; unknownFees: number };
 }

@@ -285,3 +285,22 @@ describe.skipIf(!cert)("queueEmail avec le transport SMTP", () => {
     expect(emailTransport(env)).toBe("resend");
   });
 });
+
+describe("fil de conversation (In-Reply-To / References)", () => {
+  const base = { from: "Les Gîtes <g@exemple.com>", to: "c@exemple.com", subject: "Re: x", text: "y", messageId: "<m@exemple.com>" };
+
+  it("buildMessage pose In-Reply-To et References ; References retombe sur In-Reply-To", () => {
+    const m = buildMessage({ ...base, inReplyTo: "<p@x>", references: "<a@x> <b@x> <c@x> <p@x>" });
+    expect(m).toContain("In-Reply-To: <p@x>\r\n");
+    expect(m).toContain("References: <a@x> <b@x> <c@x>\r\n <p@x>\r\n");
+    expect(buildMessage({ ...base, inReplyTo: "<p@x>" })).toContain("References: <p@x>\r\n");
+    expect(buildMessage(base)).not.toContain("In-Reply-To");
+  });
+
+  it("une valeur qui n'est pas une liste d'<identifiants> (injection d'en-tête) est refusée avant toute connexion", async () => {
+    expect(() => buildMessage({ ...base, inReplyTo: "<p@x>\r\nBcc: v@x.be" })).toThrow(/In-Reply-To invalide/);
+    expect(() => buildMessage({ ...base, inReplyTo: "<p@x>", references: "<a@x> Bcc: v@x.be" })).toThrow(/References invalide/);
+    const cfg = { host: "127.0.0.1", port: 1, secure: true, user: "u", password: "p", from: "g@exemple.com" };
+    await expect(sendSmtp(cfg, { to: "c@exemple.com", subject: "x", text: "y", inReplyTo: "<a@x>\r\nBcc: v@x.be" })).rejects.toThrow(/invalide/);
+  });
+});

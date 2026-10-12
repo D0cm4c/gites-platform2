@@ -1,6 +1,6 @@
 #!/opt/homebrew/bin/python3
-# Sonde de la production des gîtes (https://dev1.mdcdy.be) : /api/public/health répond ok et le cron a tourné il y a 30 min au plus ; une ligne dans ~/Library/Logs/gites-sonde.log, alerte Telegram (outbox du pont) au passage au rouge, rappel toutes les 12 h, message au retour au vert.
-# Usage : /opt/homebrew/bin/python3 scripts/gites_sonde.py [--url https://dev1.mdcdy.be] [--seuil-cron 30] [--sans-telegram]   ·   LaunchAgent com.julien.gites-sonde (toutes les 30 min, copie installée par make installer-sonde)
+# Sonde de la production des gîtes (https://178-105-145-191.sslip.io, Hetzner) : /api/public/health répond ok et le cron a tourné il y a 30 min au plus ; une ligne dans ~/Library/Logs/gites-sonde.log, alerte Telegram (outbox du pont) au passage au rouge, rappel toutes les 12 h, message au retour au vert.
+# Usage : /opt/homebrew/bin/python3 scripts/gites_sonde.py [--url https://178-105-145-191.sslip.io] [--seuil-cron 30] [--sans-telegram]   ·   LaunchAgent com.julien.gites-sonde (toutes les 30 min, copie installée par make installer-sonde)
 """Sonde de la production des gîtes, depuis le Mac.
 
 Vérifie, sans aucun secret :
@@ -38,7 +38,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-URL_PROD = "https://dev1.mdcdy.be"
+URL_PROD = "https://178-105-145-191.sslip.io"
 JOURNAL = Path(os.environ.get("GITES_SONDE_JOURNAL") or (Path.home() / "Library" / "Logs" / "gites-sonde.log"))
 OUTBOX = Path(os.environ.get("GITES_SONDE_OUTBOX")
               or (Path.home() / "Library" / "Application Support" / "TelegramBridge" / "data" / "outbox.jsonl"))

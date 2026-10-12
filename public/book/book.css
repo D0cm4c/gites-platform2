@@ -8,7 +8,7 @@
    1,47:1 sur blanc, --accent donne 7,6:1. */
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
 *{box-sizing:border-box;margin:0}
-body{font:15px/1.55 -apple-system,'Inter','Segoe UI',sans-serif;background:var(--bg);color:var(--ink)}
+body{font:16px/1.55 -apple-system,'Inter','Segoe UI',sans-serif;background:var(--bg);color:var(--ink)}
 .pub{max-width:900px;margin:0 auto;padding:26px 16px 60px}
 .brand{text-align:center;margin-bottom:22px;position:relative}
 .brand h1{font-size:22px;font-weight:650;letter-spacing:.2px}
@@ -18,8 +18,8 @@ body{font:15px/1.55 -apple-system,'Inter','Segoe UI',sans-serif;background:var(-
 @media(max-width:640px){.back-site{position:static;display:block;text-align:left;margin-bottom:6px}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 18px;margin-bottom:14px}
 h3{font-size:13px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin-bottom:10px;font-weight:600}
-label.f{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
-input,select,textarea{font:14px/1.4 inherit;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:9px 10px;background:#fff;width:100%}
+label.f{display:block;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
+input,select,textarea{font-size:16px;line-height:1.4;font-family:inherit;min-height:44px;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:9px 10px;background:#fff;width:100%}
 input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:2px;border-color:var(--accent)}
 /* Sans cette ligne, les cases et les radios héritent du width:100% ci-dessus :
    un radio de 465 px de large, à la zone cliquable illisible (issue #42). */
@@ -27,7 +27,7 @@ input[type=checkbox],input[type=radio]{width:auto;flex:none;margin:0;cursor:poin
 .row{display:flex;gap:12px;align-items:end;flex-wrap:wrap}
 .row>div{flex:1;min-width:120px}
 .row>div.n{flex:0 0 auto;min-width:0}
-.btn{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:11px 20px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+.btn{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:11px 20px;min-height:44px;font-size:16px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;font-weight:600;cursor:pointer;font-family:inherit}
 .btn:hover{filter:brightness(1.1)}
 .btn.o{background:#fff;color:var(--accent);border:1.5px solid var(--accent)}
 .btn:disabled{opacity:.5;cursor:default}
@@ -56,10 +56,10 @@ input[type=checkbox],input[type=radio]{width:auto;flex:none;margin:0;cursor:poin
 .prop .info{flex:1;min-width:0}
 .prop .price{text-align:right;flex:none}
 .prop .price b{font-size:18px}
-.prop .price .per{font-size:11.5px;color:var(--muted)}
-.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11.5px;font-weight:600}
+.prop .price .per{font-size:13px;color:var(--muted)}
+.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:13px;font-weight:600}
 .t-ok{background:#E6EFE8;color:var(--ok)} .t-warn{background:#FBF0DE;color:var(--warn)} .t-bad{background:#F8E7E7;color:var(--bad)}
-.muted{color:var(--muted)} .small{font-size:12.5px}
+.muted{color:var(--muted)} .small{font-size:14px}
 
 table.quote{width:100%;border-collapse:collapse;font-size:14px}
 .quote td{padding:4px 4px;border:none}
@@ -74,12 +74,12 @@ table.quote{width:100%;border-collapse:collapse;font-size:14px}
 .opt-row .name{flex:1}
 .opt-row input[type=number]{width:64px}
 .opt-add{background:#fff;color:var(--accent);border:1.5px solid var(--accent);border-radius:6px;
-  padding:7px 14px;font:600 13px inherit;font-family:inherit;cursor:pointer;white-space:nowrap;min-width:104px}
+  padding:10px 14px;min-height:44px;font-weight:600;font-size:15px;font-family:inherit;cursor:pointer;white-space:nowrap;min-width:104px}
 .opt-add:hover{background:#F2F7F3}
 .opt-add.on{background:var(--accent);color:#fff}
 .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media(max-width:560px){.formgrid{grid-template-columns:1fr}}
-.footer-note{font-size:12px;color:var(--muted);text-align:center;margin-top:14px}
+.footer-note{font-size:13.5px;color:var(--muted);text-align:center;margin-top:14px}
 .center{text-align:center}
 .cgv-box{max-height:180px;overflow-y:auto;background:#FAF9F6;border:1px solid var(--line);border-radius:6px;padding:12px;font-size:12.5px;color:#4b5563}
 .cgv-box p{margin:0 0 8px}
@@ -95,20 +95,20 @@ table.quote{width:100%;border-collapse:collapse;font-size:14px}
 a{color:var(--accent)}
 
 /* --- barre d'étapes --- */
-.steps{display:flex;gap:0;margin-bottom:18px;font-size:12px;color:var(--muted)}
-.steps span{flex:1;text-align:center;padding:8px 4px;border-bottom:3px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.steps{display:flex;gap:0;margin-bottom:18px;font-size:13px;color:var(--muted)}
+.steps span{flex:1;text-align:center;padding:8px 4px;border-bottom:3px solid var(--line);line-height:1.25}
 .steps span.on{color:var(--accent);font-weight:700;border-bottom-color:var(--accent)}
 .steps span.done{color:var(--ok);border-bottom-color:#9DBBA5}
 
 /* --- calendrier public dispo + prix --- */
 .pcal-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
 .pcal-head b{flex:1;text-align:center;text-transform:capitalize}
-.pcal-nav{background:#fff;border:1.5px solid var(--accent);color:var(--accent);border-radius:5px;padding:4px 12px;font-weight:700;cursor:pointer}
+.pcal-nav{background:#fff;border:1.5px solid var(--accent);color:var(--accent);border-radius:5px;min-width:48px;min-height:44px;padding:4px 12px;font-weight:700;cursor:pointer}
 .pcal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
-.pcal .h{font-size:10px;text-transform:uppercase;color:var(--muted);text-align:center;padding:2px 0}
-.pday{border:1px solid var(--line);border-radius:5px;min-height:46px;padding:3px 5px;cursor:pointer;background:#fff;text-align:left}
-.pday .d{font-size:11px;color:var(--ink);font-weight:600}
-.pday .p{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+.pcal .h{font-size:12px;text-transform:uppercase;color:var(--muted);text-align:center;padding:2px 0}
+.pday{border:1px solid var(--line);border-radius:5px;min-height:54px;padding:3px 5px;cursor:pointer;background:#fff;text-align:left}
+.pday .d{font-size:14px;color:var(--ink);font-weight:600}
+.pday .p{display:block;font-size:11px;color:var(--muted);margin-top:2px}
 .pday.off{visibility:hidden}
 .pday.past,.pday.full{background:#F1EFE9;color:var(--muted);cursor:default}
 .pday.full .p{color:var(--bad)}
@@ -119,16 +119,16 @@ a{color:var(--accent)}
 .pday.range{background:#E6EFE8;border-color:#CBD8CD}
 /* Minimum de nuits et jour d'arrivée imposé — visibles dans la case, avant
    toute sélection de dates (issue #66). */
-.pday .mn{display:block;font-size:9.5px;line-height:1.3;color:#8a7a45;font-weight:600}
+.pday .mn{display:block;font-size:11px;line-height:1.3;color:#8a7a45;font-weight:600}
 .pday.sel .mn{color:#F0EAD8}
 .pday.noarr{background:repeating-linear-gradient(135deg,#fff,#fff 5px,#F5F2EA 5px,#F5F2EA 10px)}
 .pday.noarr.sel{background:var(--accent)}
-.pcal-rules{font-size:12px;color:var(--muted);margin:6px 0 0}
+.pcal-rules{font-size:13.5px;color:var(--muted);margin:6px 0 0}
 .pcal-rules .rule{display:inline-block}
 /* Plages réservables proposées quand les dates demandées ne passent pas. */
 .sugg{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.sugg .sugg-b{padding:6px 12px;font-size:12.5px}
-.pcal-hint{font-size:12px;color:var(--muted);margin-top:8px}
+.sugg .sugg-b{padding:8px 12px;font-size:14px;text-align:left}
+.pcal-hint{font-size:14px;color:var(--muted);margin-top:8px}
 .stay-summary{background:#E6EFE8;border-radius:6px;padding:8px 12px;font-size:14px}
 
 /* --- barre séjour : résumé + voyageurs, la recherche part toute seule --- */
@@ -150,12 +150,13 @@ a{color:var(--accent)}
 .sum .sum-stay{margin:6px 0 12px}
 @media(max-width:860px){.panel-grid{grid-template-columns:1fr}.panel-side{position:static}}
 .fold{margin-top:12px}
-.fold summary{cursor:pointer;font-size:13px;color:var(--accent);font-weight:600}
+.fold summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-size:13px;color:var(--accent);font-weight:600}
 .agree{margin-top:14px;display:flex;flex-direction:column;gap:8px}
 .agree .optin{color:var(--muted)}
 /* Message de validation attaché à son champ (issue #41) : l'erreur se lit à
    côté de la case, pas dans un bandeau générique en bas de formulaire. */
-.field-msg{color:var(--bad);font-size:12.5px;font-weight:600}
+.field-msg{color:var(--bad);font-size:14px;font-weight:600;margin-top:4px}
+input[aria-invalid=true]{border-color:var(--bad);border-width:2px}
 .field-msg:empty{display:none}
 .agree label.err{color:var(--bad)}
 /* Widget anti-robot Turnstile (issue #6) : présent uniquement quand le
@@ -163,8 +164,8 @@ a{color:var(--accent)}
    réduit toute seule sous 300 px de viewport. */
 .turnstile{margin-top:14px;min-height:65px}
 .turnstile iframe{max-width:100%}
-.reassure{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
-.qcard summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--accent)}
+.reassure{font-size:13.5px;color:var(--muted);margin-top:10px;line-height:1.5}
+.qcard summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-size:13px;font-weight:600;color:var(--accent)}
 
 /* --- barre mobile fixe : total + payer --- */
 .mobilebar{display:none;position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);
@@ -183,7 +184,7 @@ a{color:var(--accent)}
 .paybox .paychoices{border:0;padding:0;margin:0;min-width:0}
 .paybox label{display:flex;align-items:flex-start;gap:9px;padding:6px 0;font-size:14px;cursor:pointer}
 .paybox label input[type=radio]{margin-top:3px}
-.paybox .cards{font-size:11.5px;color:var(--muted);margin-top:6px}
+.paybox .cards{font-size:13px;color:var(--muted);margin-top:6px}
 .badge-secure{display:inline-block;background:#E6EFE8;color:var(--ok);border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700}
 
 /* --- fil d'échanges (voucher) --- */
@@ -241,7 +242,7 @@ a{color:var(--accent)}
    vitrine), et le composant doit rester lisible dans les deux. Toute retouche
    se fait des deux côtés — cf. site.css § visionneuse. */
 .gal-row{margin-top:6px}
-.prop .gal{padding:4px 10px;font-size:12.5px}
+.prop .gal{padding:6px 12px;font-size:14px}
 .visionneuse{border:0;padding:0;background:transparent;max-width:min(1180px,94vw);
   max-height:94vh;color:#E9E5DA}
 .visionneuse::backdrop{background:rgba(12,18,11,.93)}
@@ -259,3 +260,33 @@ a{color:var(--accent)}
 .lang-switch a{display:inline-block;padding:10px 8px;min-height:44px;color:var(--muted);text-decoration:none}
 .lang-switch a[aria-current="true"]{color:inherit;font-weight:700;text-decoration:underline}
 .back-top + .lang-switch, .pub > .lang-switch{position:static;text-align:right;margin-bottom:6px}
+
+/* --- Passe « client » du 12/10/2026 ------------------------------------------ */
+/* Cases à cocher : la ligne entière se touche, pas seulement le carré de 13 px. */
+.agree label,.paybox label{min-height:44px;align-items:center}
+input[type=checkbox],input[type=radio]{min-width:22px;min-height:22px}
+/* Carte d'hébergement sur téléphone : photo en tête, texte sur toute la
+   largeur, prix et bouton en pied. Avant, la colonne de texte se retrouvait à
+   ~60 px de large (un mot par ligne) entre la photo et le prix. */
+@media(max-width:640px){
+  .prop{flex-direction:column;align-items:stretch;gap:10px}
+  .prop .ph{width:100%;height:150px}
+  .prop .price{text-align:left;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px}
+  .prop .price .btn{margin-top:0 !important;min-width:140px}
+  .prop .price .per{flex:1 1 100%;order:3}
+  .prop .price .savings{flex:1 1 100%;order:4}
+  .pcal{gap:2px}
+  .pday .mn{display:none} /* le minimum de nuits reste écrit sous le calendrier (.pcal-rules) */
+  .pday{padding:3px 3px}
+  .holdbar{font-size:14px}
+}
+/* Ce qui se passe ensuite : sous le bouton de paiement et sur la page merci. */
+.next{background:#F4F8F5;border:1px solid #CBD8CD;border-radius:8px;padding:12px 14px;margin-top:14px;font-size:14.5px}
+.next h4{font-size:14px;margin-bottom:6px}
+.next ol{margin:0;padding-left:20px}
+.next li{margin:3px 0}
+.contact-where{font-size:14px;color:var(--muted);margin:8px 0}
+.contact-ok{background:#E6EFE8;border:1px solid #CBD8CD;border-radius:8px;padding:12px 14px;margin-top:10px;font-size:14.5px}
+.contact-ok blockquote{margin:8px 0 0;padding:6px 10px;border-left:3px solid var(--accent);background:#fff;white-space:pre-wrap;overflow-wrap:anywhere}
+
+.prop .price br{display:none}

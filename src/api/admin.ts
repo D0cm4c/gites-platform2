@@ -67,6 +67,7 @@ import {
   getFeed,
   getGuest,
   getProperty,
+  hasEmailOfKinds,
   getQuoteContext,
   getRateRule,
   insertGuestEntry,
@@ -144,24 +145,31 @@ import { beds24Liaison, buildPropertyPlan, createBeds24Property, CreationRefusee
 import {
   MIN_CHECKOUT_CENTS,
   quoteFromContext,
-  sendVoucher,
+  sendConfirmation,
   startCheckout,
+  stripeConfigForBooking,
   voucherUrl,
   type QuoteBody,
 } from "../services/booking-flow";
-import { buildBalanceReminderEmail, queueEmail } from "../services/email";
+import { dropPreparedRefunds, executeRefunds, planCancellation, prepareRefunds, replayRefund } from "../services/annulation";
+import { buildBalanceReminderEmail, buildCancellationEmail, buildPaymentLinkEmail, queueEmail, queueEmailDetailed } from "../services/email";
+import { buildConfirmationPdf, confirmationFileName, loadConfirmationPdfContext } from "../services/confirmation-pdf";
 import { importElloha } from "../services/elloha-import";
+import { importAgendaGoogle, MAX_AGENDA_EVENTS } from "../services/agenda-import";
 import { replyOnChannel } from "../services/beds24-messages";
 import { exportSql } from "../services/export-db";
 import { tarStream } from "../core/tar";
 import {
   createServiceKey, listServiceKeys, resolveServiceKey, revokeServiceKey, validServiceKeyName,
 } from "../services/service-keys";
-import { processInboundEmail, type ParsedEmail } from "../services/inbound-email";
+import { extractMessageIds, processInboundEmail, type ParsedEmail } from "../services/inbound-email";
+import { getMailboxState, mailboxConfigured, ownAddresses, pullMailbox, NO_SOCKET_MESSAGE } from "../services/mailbox";
 import { syncFeed } from "../services/ical";
 import { countDirectBookings, countSearchStages, listSearchLog } from "../services/search-log";
 import { registerLot2AdminRoutes } from "./admin-lot2";
-import { registerLot3AdminRoutes, sendPriceLinking } from "./admin-lot3";
+import { registerImprovementRoutes } from "./admin-ameliorations";
+import { PriceLinkingError, registerLot3AdminRoutes, sendPriceLinking } from "./admin-lot3";
+import { registerStripeAdminRoutes } from "./admin-stripe";
 
 // --- garde d'authentification -------------------------------------------------
 
@@ -579,6 +587,8 @@ export function registerAdminRoutes(router: Router): void {
   registerLot2AdminRoutes(router);
   // Lot 3 : promotions Airbnb, prix dérivés par canal, avis (src/api/admin-lot3.ts).
   registerLot3AdminRoutes(router);
+  registerImprovementRoutes(router);
+  registerStripeAdminRoutes(router);
 
   // --- connexion --------------------------------------------------------------
   // SEULE route /api/admin/* volontairement HORS guard : elle sert à obtenir
@@ -1200,13 +1210,13 @@ export function registerAdminRoutes(router: Router): void {
     let linking: { resent: boolean; error?: string } | undefined;
     if (parsePriceLinking(await getSetting(env.DB, PRICE_LINKING_KEY)).enabled && beds24WritesAllowed(env)) {
       try {
-        await sendPriceLinking(env, true, { enabled: true, markups: before.channels });
+        await sendPriceLinking(env, true);
         const lines = derivedLines(channels);
         await setSetting(env.DB, PRICE_LINKING_KEY, JSON.stringify({ enabled: true, sentMarkups: Object.fromEntries(lines.map((l) => [l.channel, l.markupPct])), sentAt: new Date().toISOString() }));
         linking = { resent: true };
       } catch (e) {
         linking = { resent: false, error: e instanceof Error ? e.message : String(e) };
-        await audit(env.DB, "admin", "beds24.price_linking_failed", "app", { error: linking.error, par: currentUser(req) });
+        await audit(env.DB, "admin", "beds24.price_linking_failed", "app", { error: linking.error, journal: e instanceof PriceLinkingError ? e.journal : undefined, par: currentUser(req) });
       }
     }
     if (linking) return json({ ...after, linking });
@@ -1773,9 +1783,9 @@ export function registerAdminRoutes(router: Router): void {
     const db = env.DB;
     const body = await readJson<
       QuoteBody & {
-        guest?: { firstName?: string; lastName?: string; email?: string; phone?: string; address?: string; country?: string };
+        guest?: { firstName?: string; lastName?: string; email?: string; phone?: string; address?: string; country?: string; lang?: string };
         internalNotes?: string;
-        confirmNow?: boolean;          // true = confirmée d'office (paiement hors ligne)
+        confirmNow?: boolean;          // ignoré depuis le 11/10/2026 : une vente du back-office crée toujours une option
         generatePaymentLink?: boolean; // true = créer un lien Stripe à transmettre
         paymentMode?: "deposit" | "full";
         holdMinutes?: number;          // si non confirmée : durée de l'option (défaut 72 h)
@@ -1807,11 +1817,15 @@ export function registerAdminRoutes(router: Router): void {
       phone: String(body.guest?.phone ?? "").trim() || null,
       address: String(body.guest?.address ?? "").trim() || null,
       country: String(body.guest?.country ?? "").trim() || null,
+      lang: body.guest?.lang === "nl" ? "nl" : undefined,
     });
 
     const full = body.paymentMode === "full" || quote.balanceDueDate === null;
     const amountDue = full ? quote.totalCents : quote.depositCents;
-    const confirmNow = body.confirmNow !== false; // défaut : confirmée (vente téléphone)
+    // Décision de Julien (11/10/2026) : pas de vente « confirmée » au back-office.
+    // La vente crée une OPTION ; le client reçoit un lien vers la page de sa
+    // réservation, y accepte les CGV, paie les arrhes, puis reçoit la
+    // confirmation et son PDF (handlePaymentSuccess). `confirmNow` est ignoré.
 
     const created = await createBookingAtomic(db, {
       unitId: ctx.unit.id,
@@ -1819,7 +1833,7 @@ export function registerAdminRoutes(router: Router): void {
       checkout: String(body.checkout),
       adults,
       children,
-      status: confirmNow ? "confirmed" : "pending",
+      status: "pending",
       holdMinutes: intParam(String(body.holdMinutes ?? ""), 72 * 60),
       source: "manual",
       guestId,
@@ -1832,7 +1846,7 @@ export function registerAdminRoutes(router: Router): void {
       internalNotes: String(body.internalNotes ?? "").trim() || null,
     });
     if (!created.ok) return apiError(409, "créneau indisponible (conflit avec une autre réservation)");
-    await audit(db, "admin", "booking.create_manual", `booking:${created.id}`, { reference: created.reference, confirmNow });
+    await audit(db, "admin", "booking.create_manual", `booking:${created.id}`, { reference: created.reference });
     triggerBeds24Push(db, env, execCtx, ctx.unit.propertyId);
 
     let paymentUrl: string | null = null;
@@ -1841,25 +1855,110 @@ export function registerAdminRoutes(router: Router): void {
       const res = await startCheckout(db, env, booking, full ? "full" : "deposit", amountDue, "admin");
       paymentUrl = res.url;
     }
+    // L'option part vers le client : mail `payment_link` (le gabarit existant) dont
+    // le lien est la page de SA réservation (voucher), où il accepte les CGV et
+    // paie les arrhes. Une erreur d'envoi ne défait pas la vente : le lien reste
+    // dans la réponse, à transmettre à la main.
+    let optionUrl: string | null = null;
+    let optionMailQueued = false;
     const booking = await getBooking(db, created.id);
-    return json({ booking, paymentUrl }, 201);
+    if (booking) {
+      optionUrl = voucherUrl(env, booking);
+      if (email) {
+        try {
+          const property = booking.propertyId != null ? await getProperty(db, booking.propertyId) : null;
+          if (property) {
+            const mail = buildPaymentLinkEmail(booking, property, full ? "Paiement intégral" : "Arrhes", amountDue, optionUrl, { holdUntil: booking.holdExpiresAt });
+            await queueEmail(db, env, { bookingId: booking.id, to: email, subject: mail.subject, bodyText: mail.bodyText, kind: "payment_link" });
+            optionMailQueued = true;
+          }
+        } catch (e) {
+          await audit(db, "admin", "option_mail.error", `booking:${created.id}`, { error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+    }
+    return json({ booking, paymentUrl, optionUrl, optionMailQueued }, 201);
   }));
 
+  // Annulation (CGV v3.1 art. 4-5, décisions du 12/10/2026) : voir services/annulation.ts.
+  // `par` : « locataire » (le client) ou « proprietaire » (l'exploitant), noms d'API inchangés.
+  // `simuler: true` rend le plan sans rien faire ; un plan qui rembourse par
+  // Stripe exige `confirmer: true`.
   router.post("/api/admin/bookings/:id/cancel", guard(async (req, env, p, _url, execCtx) => {
     const id = intParam(p.id, 0);
-    const body = await readJson<{ reason?: string }>(req);
+    const body = await readJson<{ reason?: string; par?: string; simuler?: boolean; confirmer?: boolean; forceMajeure?: boolean; sejourEntame?: boolean }>(req);
+    // « client » et « exploitant » sont acceptés comme synonymes.
+    const parBrut = body?.par ?? "locataire";
+    const par = parBrut === "client" ? "locataire" : parBrut === "exploitant" ? "proprietaire" : parBrut;
+    if (par !== "locataire" && par !== "proprietaire") return apiError(400, "par : « locataire » (le client) ou « proprietaire » (l'exploitant)");
     const booking = await getBooking(env.DB, id);
     if (!booking) return apiError(404, "réservation inconnue");
+    if (booking.status === "cancelled") return apiError(409, "déjà annulée");
+    const cfg = await stripeConfigForBooking(env.DB, env, booking);
+    const plan = await planCancellation(env.DB, cfg, booking, par, { forceMajeure: body?.forceMajeure === true, sejourEntame: body?.sejourEntame === true });
+    if (body?.simuler === true) return json({ ok: true, simule: true, plan });
+    if (plan.stripeRefundCents > 0 && body?.confirmer !== true) {
+      return json({ error: "Cette annulation rembourse de l'argent par Stripe : confirmer: true est requis (simuler: true pour voir le plan).", plan }, 400);
+    }
+    // Argent en jeu (arrhes gardées, remboursement, indemnité) : jamais par une clé de service
+    // (script, agent) — une session humaine seulement.
+    if (plan.mode === "arrhes" && !isHuman(req)) return apiError(403, "annuler une réservation payée se fait depuis une session humaine (pas par une clé de service)");
+    // Les lignes de remboursement existent AVANT l'annulation : une panne entre les deux les laisse reprenables.
+    const prepared = await prepareRefunds(env.DB, booking, plan.stripeRefunds);
     const done = await cancelBooking(env.DB, id, String(body?.reason ?? "annulation admin"));
-    if (!done) return apiError(409, "déjà annulée");
-    await audit(env.DB, "admin", "booking.cancel", `booking:${id}`, { reason: body?.reason, par: currentUser(req) });
+    if (!done) {
+      await dropPreparedRefunds(env.DB, booking, prepared.map((x) => x.rowId));
+      return apiError(409, "déjà annulée");
+    }
+    await audit(env.DB, "admin", "booking.cancel", `booking:${id}`, { reason: body?.reason, par: currentUser(req), annulePar: par, plan });
     if (booking.propertyId != null) triggerBeds24Push(env.DB, env, execCtx, booking.propertyId);
-    return json({ ok: true, note: "Remboursement éventuel à traiter manuellement dans Stripe (politique d'annulation : TODO Julien)." });
+
+    // Un remboursement échoué ne défait pas l'annulation : il est signalé et rejouable.
+    const refunds = prepared.length > 0 ? await executeRefunds(env.DB, cfg, booking, prepared) : [];
+    const failed = refunds.filter((r) => r.status === "failed");
+    if (failed.length > 0) await audit(env.DB, "admin", "refund.failed", `booking:${id}`, { failed });
+    if (refunds.length > 0) await audit(env.DB, "admin", "refund.done", `booking:${id}`, { refunds });
+    if (plan.indemnityCents > 0 || plan.manualRefundCents > 0) {
+      await audit(env.DB, "admin", "refund.manual_due", `booking:${id}`, { indemnityCents: plan.indemnityCents, manualRefundCents: plan.manualRefundCents });
+    }
+
+    // Mail au client : une fois, à l'annulation, et seulement si de l'argent ou
+    // une réservation confirmée est en jeu (une option non payée n'en reçoit pas).
+    let mail: "stub" | "sent" | "failed" | "non" = "non";
+    try {
+      const concerned = plan.mode === "arrhes" || booking.status === "confirmed";
+      if (plan.mode !== "canal" && concerned && booking.guestEmail && booking.propertyId != null && !(await hasEmailOfKinds(env.DB, id, ["cancellation"]))) {
+        const property = await getProperty(env.DB, booking.propertyId);
+        if (property) {
+          const email = buildCancellationEmail(booking, property, plan);
+          mail = await queueEmail(env.DB, env, { bookingId: id, to: booking.guestEmail, subject: email.subject, bodyText: email.bodyText, kind: "cancellation" });
+        }
+      }
+    } catch (e) {
+      mail = "failed";
+      await audit(env.DB, "admin", "cancellation_mail.error", `booking:${id}`, { error: e instanceof Error ? e.message : String(e) });
+    }
+    return json({ ok: true, plan, refunds, mail, note: plan.note });
+  }));
+
+  // Rejeu d'un remboursement Stripe échoué (ligne payments kind=refund, status=failed).
+  router.post("/api/admin/bookings/:id/refunds/:refundId/retry", guard(async (req, env, p) => {
+    if (!isHuman(req)) return apiError(403, "un remboursement se rejoue depuis une session humaine (pas par une clé de service)");
+    const id = intParam(p.id, 0);
+    const booking = await getBooking(env.DB, id);
+    if (!booking) return apiError(404, "réservation inconnue");
+    const cfg = await stripeConfigForBooking(env.DB, env, booking);
+    try {
+      const outcome = await replayRefund(env.DB, cfg, booking, intParam(p.refundId, 0));
+      return json({ ok: outcome.status !== "failed", refund: outcome });
+    } catch (e) {
+      return apiError(409, e instanceof Error ? e.message : String(e));
+    }
   }));
 
   router.post("/api/admin/bookings/:id/confirm", guard(async (req, env, p) => {
     const id = intParam(p.id, 0);
-    const body = await readJson<{ sendVoucher?: boolean }>(req);
+    const body = await readJson<{ sendVoucher?: boolean; sendConfirmation?: boolean }>(req);
     const outcome = await confirmBookingAtomic(env.DB, id);
     if (outcome === "conflict") {
       await audit(env.DB, "admin", "booking.confirm_conflict", `booking:${id}`);
@@ -1867,9 +1966,10 @@ export function registerAdminRoutes(router: Router): void {
     }
     if (outcome !== "confirmed") return apiError(409, "cette réservation n'est pas en attente");
     await audit(env.DB, "admin", "booking.confirm_manual", `booking:${id}`);
+    // `sendVoucher` : ancien nom du drapeau, gardé pour les scripts existants.
     let voucherQueued = false;
-    if (body?.sendVoucher) voucherQueued = await sendVoucher(env.DB, env, id);
-    return json({ ok: true, voucherQueued });
+    if (body?.sendVoucher || body?.sendConfirmation) voucherQueued = await sendConfirmation(env.DB, env, id);
+    return json({ ok: true, voucherQueued, confirmationQueued: voucherQueued });
   }));
 
   router.post("/api/admin/bookings/:id/payments", guard(async (req, env, p) => {
@@ -1948,13 +2048,36 @@ export function registerAdminRoutes(router: Router): void {
     return json({ ok: true, balanceCents: balance, payUrl });
   }));
 
-  router.post("/api/admin/bookings/:id/resend-voucher", guard(async (_req, env, p) => {
+  /** Renvoie la confirmation (mail soigné + PDF de confirmation et CGV en pièce jointe). L'URL
+   *  `resend-voucher` est l'ancien nom, gardé pour les scripts et le back-office
+   *  d'avant. */
+  const resendConfirmation = guard(async (req, env, p) => {
     const id = intParam(p.id, 0);
-    const queued = await sendVoucher(env.DB, env, id);
+    const queued = await sendConfirmation(env.DB, env, id, { force: true });
     if (!queued) return apiError(400, "pas d'email client sur cette réservation");
-    await audit(env.DB, "admin", "email.voucher_resent", `booking:${id}`);
+    await audit(env.DB, "admin", "email.confirmation_resent", `booking:${id}`, { par: currentUser(req) });
     return json({ ok: true });
-  }));
+  });
+  router.post("/api/admin/bookings/:id/resend-confirmation", resendConfirmation);
+  router.post("/api/admin/bookings/:id/resend-voucher", resendConfirmation);
+
+  /** « Confirmation de réservation et conditions générales » en PDF (toute
+   *  réservation, y compris pour la relire avant envoi). `contrat.pdf` est
+   *  l'ancien nom, gardé en alias : même réponse. */
+  const confirmationPdf = guard(async (_req, env, p) => {
+    const id = intParam(p.id, 0);
+    const ctx = await loadConfirmationPdfContext(env.DB, id);
+    if (!ctx) return apiError(404, "réservation inconnue");
+    return new Response(buildConfirmationPdf(ctx), {
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": `inline; filename="${confirmationFileName(ctx.booking.reference)}"`,
+        "cache-control": "private, no-store",
+      },
+    });
+  });
+  router.get("/api/admin/bookings/:id/confirmation.pdf", confirmationPdf);
+  router.get("/api/admin/bookings/:id/contrat.pdf", confirmationPdf);
 
   /** Modifier une réservation SANS annuler-recréer (issue #73).
    *
@@ -1978,7 +2101,7 @@ export function registerAdminRoutes(router: Router): void {
     const id = intParam(p.id, 0);
     const body = await readJson<{
       internalNotes?: string;
-      guest?: { firstName?: string; lastName?: string; email?: string; phone?: string; address?: string; country?: string };
+      guest?: { firstName?: string; lastName?: string; email?: string; phone?: string; address?: string; country?: string; lang?: string };
       unitId?: number;
       checkin?: string;
       checkout?: string;
@@ -2571,25 +2694,27 @@ export function registerAdminRoutes(router: Router): void {
   }));
 
   router.post("/api/admin/ical-feeds", guard(async (req, env) => {
-    const body = await readJson<{ unitId?: number; name?: string; url?: string }>(req);
+    const body = await readJson<{ unitId?: number; name?: string; url?: string; departureDayIncluded?: boolean }>(req);
     const unitId = intParam(String(body?.unitId ?? ""), 0);
     const name = String(body?.name ?? "").trim();
     const feedUrl = String(body?.url ?? "").trim();
     if (!unitId || !name || !/^https?:\/\//.test(feedUrl)) return apiError(400, "unitId, name et url http(s) requis");
-    const id = await createFeed(env.DB, { unitId, name, url: feedUrl });
-    await audit(env.DB, "admin", "ical_feed.create", `feed:${id}`, { unitId, name });
+    const departureDayIncluded = body?.departureDayIncluded === true;
+    const id = await createFeed(env.DB, { unitId, name, url: feedUrl, departureDayIncluded });
+    await audit(env.DB, "admin", "ical_feed.create", `feed:${id}`, { unitId, name, departureDayIncluded });
     return json({ id }, 201);
   }));
 
   router.patch("/api/admin/ical-feeds/:id", guard(async (req, env, p) => {
     const id = intParam(p.id, 0);
-    const body = await readJson<{ name?: string; url?: string; active?: boolean }>(req);
+    const body = await readJson<{ name?: string; url?: string; active?: boolean; departureDayIncluded?: boolean }>(req);
     if (!id || !body) return apiError(400, "requête invalide");
     if (body.url !== undefined && !/^https?:\/\//.test(String(body.url))) return apiError(400, "url invalide");
     await updateFeed(env.DB, id, {
       name: body.name !== undefined ? String(body.name).trim() : undefined,
       url: body.url !== undefined ? String(body.url).trim() : undefined,
       active: typeof body.active === "boolean" ? body.active : undefined,
+      departureDayIncluded: typeof body.departureDayIncluded === "boolean" ? body.departureDayIncluded : undefined,
     });
     await audit(env.DB, "admin", "ical_feed.update", `feed:${id}`, body);
     return json({ ok: true });
@@ -2624,6 +2749,31 @@ export function registerAdminRoutes(router: Router): void {
     const csv = String(body?.csv ?? "");
     if (csv.trim().length === 0) return apiError(400, "csv attendu");
     const result = await importElloha(env.DB, propertyId, csv, body?.dryRun !== false);
+    return json({ result });
+  }));
+
+  // --- import des agendas Google de papa (scripts/importer_agenda_google.py) -------
+  // Idempotent ; `essai: true` dit ce qui serait fait sans rien écrire.
+  router.post("/api/admin/import/agenda-google", guard(async (req, env, _p, _url, execCtx) => {
+    const body = await readJson<{ unitId?: unknown; feedId?: unknown; evenements?: unknown; essai?: unknown }>(req);
+    if (!body) return apiError(400, "corps JSON attendu");
+    const unitId = intParam(String(body.unitId ?? ""), 0);
+    const feedId = intParam(String(body.feedId ?? ""), 0);
+    if (!Array.isArray(body.evenements) || body.evenements.length === 0) return apiError(400, "evenements : liste attendue");
+    if (body.evenements.length > MAX_AGENDA_EVENTS) return apiError(400, `au plus ${MAX_AGENDA_EVENTS} événements par envoi`);
+    const feed = await getFeed(env.DB, feedId);
+    if (!feed) return apiError(404, "flux iCal inconnu");
+    if (feed.unitId !== unitId) return apiError(400, `le flux ${feedId} appartient au bien ${feed.unitId}, pas au bien ${unitId}`);
+    const essai = body.essai === true;
+    const result = await importAgendaGoogle(env.DB, feed, body.evenements, { essai });
+    if (!essai) {
+      await audit(env.DB, "admin", "agenda.import", `feed:${feed.id}`, {
+        par: currentUser(req), creees: result.creees, completees: result.completees,
+        annulees: result.annulees, blocages: result.blocages, ignorees: result.ignorees,
+      });
+      const unit = await getUnit(env.DB, unitId);
+      if (unit && result.creees + result.annulees + result.blocages > 0) triggerBeds24Push(env.DB, env, execCtx, unit.propertyId);
+    }
     return json({ result });
   }));
 
@@ -2746,21 +2896,31 @@ export function registerAdminRoutes(router: Router): void {
    *  du client) ; doublée par email si l'envoi réel est activé (sinon stub). */
   async function sendTeamReply(
     env: Env,
-    opts: { propertyId: number; bookingId: number | null; guestId: number | null; toEmail: string | null; subject: string; body: string },
+    opts: {
+      propertyId: number; bookingId: number | null; guestId: number | null; toEmail: string | null; subject: string; body: string;
+      /** Réponse à un mail de la boîte de contact : fil Gmail conservé (In-Reply-To / References). */
+      thread?: { inReplyTo: string | null; references: string | null };
+    },
   ): Promise<{ id: number; delivery: string }> {
     const db = env.DB;
     const property = await getProperty(db, opts.propertyId);
     let delivery = "aucune";
+    let sentMessageId: string | null = null;
     if (opts.toEmail && /@/.test(opts.toEmail)) {
       // Le statut réel de l'envoi (SMTP ou Resend), et non plus une déduction
       // des variables : un échec d'envoi se voit comme tel dans le fil.
-      delivery = await queueEmail(db, env, {
+      const sent = await queueEmailDetailed(db, env, {
         bookingId: opts.bookingId,
         to: opts.toEmail,
         subject: opts.subject,
         bodyText: opts.body,
         kind: "reply",
+        inReplyTo: opts.thread?.inReplyTo ?? null,
+        references: opts.thread?.references ?? null,
       });
+      delivery = sent.status;
+      // le Message-ID SMTP (<…>) : la réponse du client, In-Reply-To, retrouvera ce fil
+      sentMessageId = sent.providerId && /^<[^<>\s]+>$/.test(sent.providerId) ? sent.providerId : null;
     }
     const id = await insertOutboundMessage(db, {
       propertyId: opts.propertyId,
@@ -2771,6 +2931,10 @@ export function registerAdminRoutes(router: Router): void {
       bookingId: opts.bookingId,
       guestId: opts.guestId,
       delivery,
+      channel: opts.thread ? "email" : "form",
+      messageId: sentMessageId,
+      inReplyTo: opts.thread?.inReplyTo ?? null,
+      references: opts.thread?.references ?? null,
     });
     await audit(db, "admin", "message.reply", `message:${id}`, { bookingId: opts.bookingId, delivery });
     return { id, delivery };
@@ -2798,16 +2962,45 @@ export function registerAdminRoutes(router: Router): void {
         throw e;
       }
     }
+    const toEmail = original.direction === "in" ? original.fromEmail : original.toEmail;
+    // Mail de la boîte de contact : on ne répond jamais à l'adresse des gîtes (boucle) ni à un
+    // expéditeur qui s'en réclame sans preuve.
+    let thread: { inReplyTo: string | null; references: string | null } | undefined;
+    if (original.channel === "email") {
+      if (original.spoofed || (toEmail && (await ownAddresses(env.DB, env)).has(toEmail.toLowerCase()))) {
+        return apiError(400, "Ce message vient de l'adresse des gîtes elle-même (ou s'en réclame sans preuve) : pas de réponse, cela écrirait aux gîtes.");
+      }
+      const parent = original.direction === "in" ? extractMessageIds(original.messageId)[0] ?? null : null;
+      const chain = [...extractMessageIds(original.refs), ...(parent ? [parent] : [])].filter((x, i, a) => a.indexOf(x) === i).slice(-20);
+      thread = { inReplyTo: parent, references: chain.length ? chain.join(" ") : null };
+    }
     const result = await sendTeamReply(env, {
       propertyId: original.propertyId ?? 1,
       bookingId: original.bookingId,
       guestId: original.guestId,
-      toEmail: original.direction === "in" ? original.fromEmail : original.toEmail,
+      toEmail,
       subject: original.subject.startsWith("Re:") ? original.subject : `Re: ${original.subject}`,
       body: text,
+      thread,
     });
-    await markMessage(env.DB, id, "traité");
+    // un envoi échoué ne retire pas la conversation de « À répondre » : rien n'est parti
+    if (result.delivery !== "failed") await markMessage(env.DB, id, "traité");
     return json({ ok: true, ...result });
+  }));
+
+  // Boîte de contact (IMAP) : état de la relève, et relève à la demande.
+  router.get("/api/admin/mailbox", guard(async (_req, env) => {
+    return json({
+      configured: mailboxConfigured(env),
+      supported: typeof env.IMAP_FETCH === "function",
+      note: mailboxConfigured(env) && !env.IMAP_FETCH ? NO_SOCKET_MESSAGE : null,
+      state: await getMailboxState(env.DB),
+    });
+  }));
+
+  router.post("/api/admin/mailbox/poll", guard(async (_req, env) => {
+    const result = await pullMailbox(env);
+    return json({ ok: !result.error, result });
   }));
 
   // Nouveau message à un client depuis sa réservation (fiche résa → Messages).
@@ -2823,7 +3016,7 @@ export function registerAdminRoutes(router: Router): void {
       bookingId: booking.id,
       guestId: booking.guestId,
       toEmail: booking.guestEmail ?? null,
-      subject: `Votre réservation ${booking.reference}`,
+      subject: `[${booking.reference}] Votre réservation`,
       body: text,
     });
     return json({ ok: true, ...result });

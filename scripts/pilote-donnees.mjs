@@ -84,7 +84,8 @@ wrangler(["d1", "migrations", "apply", "gites-platform", "--local"], { quiet: tr
 sql("DELETE FROM app_settings WHERE key LIKE 'beds24_%'");
 sql("UPDATE settings SET value = '' WHERE key = 'email_forward_to'");
 sql("UPDATE ical_feeds SET active = 0");
-console.log("Base locale prête (Beds24, transferts et flux iCal coupés).");
+sql("DELETE FROM property_stripe");
+console.log("Base locale prête (Beds24, Stripe, transferts et flux iCal coupés).");
 
 if (sansDemo) process.exit(0);
 

@@ -354,7 +354,7 @@ Le reste est du CRUD typé : `PropertyRow`, `UnitRow`, `BookingRow`, `PaymentRow
 |---|---|
 | `admin-auth.ts` | Comptes back-office : PBKDF2-SHA256 (30 000 itérations), sessions à jeton (seul le SHA-256 est stocké), mots de passe générés `mot-mot-mot-NN` dictables au téléphone |
 | `settings.ts` | Réglages **globaux** clé/valeur (`app_settings`) — modifiables sans redéploiement |
-| `booking-flow.ts` | Flux partagé public/admin : `quoteFromContext`, `startCheckout`, `handlePaymentSuccess` (idempotent), `sendVoucher` |
+| `booking-flow.ts` | Flux partagé public/admin : `quoteFromContext`, `startCheckout`, `handlePaymentSuccess` (idempotent), `sendConfirmation` (mail + PDF « Confirmation de réservation et conditions générales », cf. docs/confirmation-pdf.md) |
 | `stripe.ts` | Checkout par API REST, **stub sans clé**, vérification HMAC du webhook |
 | `email.ts` | Construction des emails (voucher, lien de paiement, rappel de solde) + `queueEmail` → `email_log` |
 | `ical.ts` | `buildIcs` (export), `parseIcs` (import), `syncFeed` |
@@ -362,6 +362,7 @@ Le reste est du CRUD typé : `PropertyRow`, `UnitRow`, `BookingRow`, `PaymentRow
 | `beds24-sync.ts` | Sortant (`pushCalendars`, `triggerBeds24Push`) et entrant (`applyChannelBookings`, `pullBeds24Bookings`) |
 | `elloha-import.ts` | Import CSV avec simulation préalable (`dryRun`) |
 | `inbound-email.ts` | Parseur MIME maison (multipart, quoted-printable, base64, encoded-words) + rattachement |
+| `mailbox.ts` | Relève IMAP de la boîte de contact (Node seulement), rattachement, curseur UID — cf. `docs/messagerie.md` |
 | `cron.ts` | Les 4 étapes planifiées, **chacune dans son propre try/catch** |
 
 > [!note]

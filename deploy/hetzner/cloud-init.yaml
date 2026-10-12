@@ -1,0 +1,122 @@
+#cloud-config
+# Rôle : première configuration du serveur Hetzner des gîtes (Debian 12 ou Ubuntu 24.04).
+# Usage : coller ce fichier dans « Cloud config » à la création du serveur, APRÈS avoir
+#         remplacé les deux clés par `deploy/hetzner/preparer-cloud-init.sh` (ne jamais
+#         éditer à la main : les placeholders __SSH_PUBLIC_KEY__ et __DEPLOY_PUBLIC_KEY__
+#         sont des clés PUBLIQUES, aucun secret n'est ici).
+#
+# Deux utilisateurs, aucun mot de passe, SSH par clé seulement :
+#   - claude : administrateur (sudo sans mot de passe), la clé de Claude ;
+#   - gites  : fait tourner le site et reçoit les déploiements ; sudo limité à
+#              « systemctl restart gites ». Reçoit la clé de Claude ET la clé de
+#              GitHub Actions (cette dernière ne peut lancer que deploy.sh).
+# Dossiers : /srv/gites/app (clone du code), /srv/gites/data (SQLite + photos),
+#            /srv/gites/backups (sauvegardes) : jamais dans le dossier du code.
+
+hostname: gites
+timezone: Europe/Brussels
+package_update: true
+package_upgrade: true
+
+users:
+  - name: claude
+    gecos: Administrateur (Claude)
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - __SSH_PUBLIC_KEY__
+  - name: gites
+    gecos: Site des gîtes
+    shell: /bin/bash
+    lock_passwd: true
+    homedir: /home/gites
+    groups: [systemd-journal]   # lire journalctl sans sudo
+    ssh_authorized_keys:
+      - __SSH_PUBLIC_KEY__
+      # Clé de GitHub Actions : ne peut que lancer le déploiement.
+      - command="/srv/gites/deploy.sh",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty __DEPLOY_PUBLIC_KEY__
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - git
+  - ufw
+  - fail2ban
+  - unattended-upgrades
+  - sqlite3
+  - build-essential   # better-sqlite3 ou tout module natif éventuel
+  - python3
+  - debian-keyring
+  - debian-archive-keyring
+  - apt-transport-https
+
+write_files:
+  # SSH : clé seulement, root interdit, seuls claude et gites peuvent entrer.
+  - path: /etc/ssh/sshd_config.d/10-gites.conf
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      PubkeyAuthentication yes
+      AllowUsers claude gites
+      MaxAuthTries 3
+      X11Forwarding no
+
+  # gites ne peut redémarrer que son propre service (et lire son état).
+  - path: /etc/sudoers.d/gites
+    permissions: "0440"
+    content: |
+      gites ALL=(root) NOPASSWD: /usr/bin/systemctl restart gites, /usr/bin/systemctl restart gites.service
+
+  - path: /etc/fail2ban/jail.d/gites.local
+    permissions: "0644"
+    content: |
+      [sshd]
+      enabled = true
+      maxretry = 4
+      bantime = 1h
+      findtime = 10m
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+
+  - path: /usr/local/sbin/gites-init.sh
+    permissions: "0700"
+    content: |
+      #!/usr/bin/env bash
+      # Installation de base (appelée par cloud-init) ; la marque finale prouve que tout a réussi.
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      mkdir -p /etc/apt/keyrings
+      curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+      echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+      curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt -o /etc/apt/sources.list.d/caddy-stable.list
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs caddy
+      mkdir -p /srv/gites/app /srv/gites/data/uploads /srv/gites/backups
+      chown -R gites:gites /srv/gites
+      chmod 750 /srv/gites
+      ufw default deny incoming
+      ufw default allow outgoing
+      ufw allow 22/tcp
+      ufw allow 80/tcp
+      ufw allow 443/tcp
+      ufw --force enable
+      systemctl enable --now fail2ban
+      systemctl enable --now unattended-upgrades
+      sshd -t
+      systemctl restart ssh
+      touch /var/lib/cloud/gites-pret
+
+runcmd:
+  - [ /usr/local/sbin/gites-init.sh ]
+
+final_message: "Serveur des gîtes prêt après $UPTIME secondes."

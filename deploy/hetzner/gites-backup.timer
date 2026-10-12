@@ -1,0 +1,11 @@
+# Rôle : déclenche gites-backup.service chaque nuit à 3 h 30 (heure de Bruxelles).
+[Unit]
+Description=Sauvegarde nocturne des gîtes
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

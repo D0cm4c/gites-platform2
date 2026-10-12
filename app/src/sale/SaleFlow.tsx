@@ -2,13 +2,13 @@
 // devis calculé tout seul (POST /quote), client et paiement (POST /bookings).
 // Ouverte depuis la grille (dates déjà choisies) ou par « Nouvelle vente ».
 import { Trans, useLingui } from "@lingui/react/macro";
-import { Checkbox, Modal, NumberInput, Radio, Select, TextInput } from "@mantine/core";
+import { Modal, NumberInput, Select, TextInput } from "@mantine/core";
 import { IconCheck } from "@tabler/icons-react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { api, errorText } from "../api/client";
+import { api } from "../api/client";
 import { useScopedProperties } from "../api/hooks";
 import type { Booking, IsoDate, QuoteResponse, Unit, UnitLink } from "../api/types";
 import { ErrorLine, useAction } from "../lib/action";
@@ -67,9 +67,6 @@ export function SaleFlow({ prefill, onClose }: { prefill: SalePrefill | null; on
   const [firstName, setFirstName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
-  const [mode, setMode] = useState<"option" | "confirmed">("option");
-  const [link, setLink] = useState(true);
-  const [paidAll, setPaidAll] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const [created, setCreated] = useState<{ booking: Booking; paymentUrl: string | null } | null>(null);
   const a = useAction();
@@ -87,9 +84,6 @@ export function SaleFlow({ prefill, onClose }: { prefill: SalePrefill | null; on
     setFirstName("");
     setPhone("");
     setEmail("");
-    setMode("option");
-    setLink(true);
-    setPaidAll(false);
     setLinkError(null);
     setCreated(null);
     a.reset();
@@ -173,7 +167,7 @@ export function SaleFlow({ prefill, onClose }: { prefill: SalePrefill | null; on
           {linkError ? <ErrorLine text={linkError} /> : null}
           {created.paymentUrl ? (
             <p className="lead" style={{ marginTop: 12, overflowWrap: "anywhere" }}>
-              {t`Lien de paiement à transmettre au client :`} {created.paymentUrl}
+              {t`Lien vers la réservation du client :`} {created.paymentUrl}
             </p>
           ) : null}
           <div className="acts" style={{ marginTop: 16 }}>
@@ -277,16 +271,9 @@ export function SaleFlow({ prefill, onClose }: { prefill: SalePrefill | null; on
             <TextInput size="md" type="tel" label={t`Téléphone`} value={phone} onChange={(e) => setPhone(e.currentTarget.value)} autoComplete="off" />
             <TextInput size="md" type="email" label={t`Mail`} value={email} onChange={(e) => setEmail(e.currentTarget.value)} autoComplete="off" />
           </div>
-          <Radio.Group mt="md" label={t`Paiement`} value={mode} onChange={(v) => setMode(v as "option" | "confirmed")}>
-            <Radio mt="xs" size="md" value="option" label={t`Option : les dates sont gardées en attendant les arrhes (${q ? eur(q.depositCents) : ""})`} />
-            <Radio mt="xs" size="md" value="confirmed" label={t`Confirmée sans attendre les arrhes`} />
-          </Radio.Group>
-          {mode === "confirmed" ? (
-            <Checkbox mt="md" size="md" checked={paidAll} onChange={(e) => setPaidAll(e.currentTarget.checked)} label={t`Le client a déjà payé le total (${q ? eur(q.totalCents) : ""}) : le noter comme reçu`} description={t`Sinon, le solde reste à encaisser dans la fiche.`} />
-          ) : null}
-          {mode === "option" ? (
-            <Checkbox mt="md" size="md" checked={link} onChange={(e) => setLink(e.currentTarget.checked)} label={t`Préparer un lien de paiement par carte`} />
-          ) : null}
+          <p className="muted" style={{ marginTop: 12 }}>
+            {t`Les dates sont gardées en option. Si le client a un mail, il reçoit un lien vers sa réservation : il y accepte les conditions générales, paie les arrhes (${q ? eur(q.depositCents) : ""}) et reçoit alors sa confirmation avec les conditions générales.`}
+          </p>
           <div className="acts" style={{ marginTop: 16 }}>
             <button
               type="button"
@@ -295,9 +282,7 @@ export function SaleFlow({ prefill, onClose }: { prefill: SalePrefill | null; on
               onClick={() =>
                 void a.run(
                   async () => {
-                    // Deux temps : la réservation d'abord, le lien ensuite. Si le
-                    // lien échoue, la réservation existe quand même et l'écran le dit.
-                    const r = await api<{ booking: Booking; paymentUrl: string | null }>("/bookings", {
+                    const r = await api<{ booking: Booking; optionUrl: string | null; optionMailQueued: boolean }>("/bookings", {
                       method: "POST",
                       body: {
                         unitId: Number(unitId),
@@ -307,28 +292,11 @@ export function SaleFlow({ prefill, onClose }: { prefill: SalePrefill | null; on
                         children: Number(children) || 0,
                         promoCode: promo.trim() || null,
                         guest: { lastName: lastName.trim(), firstName: firstName.trim(), phone: phone.trim(), email: email.trim() },
-                        confirmNow: mode === "confirmed",
-                        generatePaymentLink: false,
                         paymentMode: "deposit",
                       },
                     });
-                    let paymentUrl: string | null = null;
                     setLinkError(null);
-                    if (mode === "confirmed" && paidAll) {
-                      try {
-                        await api(`/bookings/${r.booking.id}/payments`, { method: "POST", body: { amountCents: r.booking.totalCents, method: "other", kind: "full", note: t`payé avant l'enregistrement` } });
-                      } catch (e) {
-                        setLinkError(t`La réservation est enregistrée, mais le paiement n'a pas été noté : ${errorText(e)} Notez-le dans la fiche.`);
-                      }
-                    }
-                    if (mode === "option" && link) {
-                      try {
-                        const amount = Math.max(50, r.booking.depositCents - r.booking.paidCents);
-                        paymentUrl = (await api<{ url: string }>(`/bookings/${r.booking.id}/payment-link`, { method: "POST", body: { amountCents: amount, kind: "deposit" } })).url;
-                      } catch (e) {
-                        setLinkError(t`La réservation est enregistrée, mais le lien de paiement n'a pas pu être créé : ${errorText(e)} Créez-le depuis la fiche.`);
-                      }
-                    }
+                    const paymentUrl = r.optionUrl;
                     setCreated({ booking: r.booking, paymentUrl });
                     return r;
                   },

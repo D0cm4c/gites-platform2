@@ -143,7 +143,7 @@ export function BookingsPage() {
       ) : null}
       {rows.length > 0 ? (
         <div className="tbl-wrap">
-          <table className="tbl dense bk">
+          <table className="tbl dense bk mcards">
             <caption className="sr">{t`Réservations, ${rows.length} lignes. Les en-têtes Client, Séjour et Total trient la liste.`}</caption>
             <thead>
               <tr>
@@ -164,13 +164,13 @@ export function BookingsPage() {
                 return (
                   <tr key={b.id} onClick={() => openBooking(b.id)}>
                     <td className="ref">{b.reference}</td>
-                    <td>
+                    <td className="mc-t">
                       <button type="button" className="cell-link" onClick={(e) => (e.stopPropagation(), openBooking(b.id))}>
                         {b.guestName || channelName(b)}
                       </button>
                       <small className="show-s-inline">{b.unitName}</small>
                     </td>
-                    <td className="hide-s">{b.unitName}</td>
+                    <td className="hide-s mc-off">{b.unitName}</td>
                     <td>
                       {stayRange(b.checkin, b.checkout)}
                       <small>
@@ -178,15 +178,15 @@ export function BookingsPage() {
                         {phaseOf(b) ? <span className="phase"> · {phaseOf(b)}</span> : null}
                       </small>
                     </td>
-                    <td className="r">
+                    <td className="r mc-r">
                       <b className="amt">{st === "plat" && !b.totalCents ? "—" : eur(b.totalCents)}</b>
                       {st === "solde" ? <small>{t`reste ${eur(balance)}`}</small> : null}
                     </td>
-                    <td className="r hide-s">{b.paidCents ? eur(b.paidCents) : "—"}</td>
+                    <td className="r hide-s mc-off">{b.paidCents ? eur(b.paidCents) : "—"}</td>
                     <td className="hide-s">
                       <span className={`pill ${st}`}>{pill[st]}</span>
                     </td>
-                    <td className="hide-s muted">{sourceLabel(b)}</td>
+                    <td className="hide-s muted mc-off">{sourceLabel(b)}</td>
                   </tr>
                 );
               })}

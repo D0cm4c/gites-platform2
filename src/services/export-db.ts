@@ -16,6 +16,14 @@ function exportable(name: string): boolean {
   return !name.startsWith("sqlite_") && !name.startsWith("_cf_");
 }
 
+/** Colonnes SECRÈTES jamais écrites dans une sauvegarde (clés Stripe secrètes et
+ *  secrets de webhook, migration 0030) : la sauvegarde part vers le Mac puis vers
+ *  Google Drive, ce n'est pas leur place. Restaurer une base oblige donc à les
+ *  ressaisir dans Réglages > Comptes Stripe (la clé publiable, publique, est gardée). */
+export const REDACTED_COLUMNS: Record<string, string[]> = {
+  property_stripe: ["secret_key", "webhook_secret"],
+};
+
 function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
@@ -53,6 +61,8 @@ export async function exportSql(db: D1Database, now: Date = new Date()): Promise
     out.push(`${t.sql};`);
     const data = await db.prepare(`SELECT * FROM ${quoteIdent(t.name)}`).all<Record<string, unknown>>();
     for (const r of data.results) {
+      const redacted = REDACTED_COLUMNS[t.name] ?? [];
+      for (const c of redacted) if (c in r) r[c] = null;
       const cols = Object.keys(r);
       out.push(
         `INSERT INTO ${quoteIdent(t.name)} (${cols.map(quoteIdent).join(", ")}) VALUES (${cols.map((c) => sqlValue(r[c])).join(", ")});`,

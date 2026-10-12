@@ -43,7 +43,14 @@ let cachedToken: { value: string; expiresAt: number } | null = null;
 export class Beds24Error extends Error {
   /** `refus` : Beds24 a répondu non, rien n'a été appliqué. `inconnu` : panne
    *  réseau, délai ou erreur 5xx — une écriture a PU être appliquée. */
-  constructor(message: string, public status?: number, public issue: "refus" | "inconnu" = "refus") {
+  constructor(
+    message: string,
+    public status?: number,
+    public issue: "refus" | "inconnu" = "refus",
+    /** Corps de la réponse Beds24 tel quel (tronqué), pour l'audit et le
+     *  diagnostic : un refus sans `errors` se lit ici mot pour mot. */
+    public response?: unknown,
+  ) {
     super(message);
   }
 }
@@ -83,6 +90,90 @@ export function beds24WritesAllowed(env: Env): boolean {
   return env.BEDS24_WRITE_ENABLED === "true";
 }
 
+/** Texte d'un élément refusé qui ne porte ni `errors` ni `error` ni
+ *  `message` (10/10/2026 : POST /properties a répondu 201 avec un élément
+ *  `success: false` sans `errors`, et l'écran n'affichait que « échec ») :
+ *  ses `warnings` et `info` s'il en a, sinon l'élément entier, tel quel. */
+function withoutErrors(item: Record<string, unknown>): string {
+  const notes: string[] = [];
+  for (const key of ["warnings", "info"] as const) {
+    const list = item[key];
+    if (!Array.isArray(list)) continue;
+    for (const m of list) {
+      notes.push(`${key === "warnings" ? "avertissement" : "info"} ${motifText(m)}`);
+    }
+  }
+  if (notes.length) return notes.join(" ; ");
+  // Aucun motif lisible : le JSON brut de l'élément, tel que Beds24 l'a envoyé
+  // (non filtré par la liste blanche : c'est justement ce qui manquait).
+  return `réponse sans motif : ${truncate(JSON.stringify(item), 800)}`;
+}
+
+export function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}… (${text.length - max} caractères coupés)` : text;
+}
+
+/** Champs gardés d'une réponse d'écriture ou d'erreur Beds24 : statut, ids,
+ *  motifs. Liste blanche : rien d'autre (aucun champ de voyageur) n'entre dans
+ *  l'audit ni dans le 502. Les motifs, eux, sont gardés en entier. */
+const KEPT_FIELDS = ["success", "id", "roomId", "propertyId", "new", "modified", "errors", "warnings", "info", "action", "field", "subField", "error", "message", "code", "type"] as const;
+
+const MOTIF_LISTS = new Set(["errors", "warnings", "info"]);
+
+/** Un élément de errors[] / warnings[] / info[] : TOUTES ses clés scalaires
+ *  (chaîne, nombre, booléen, null), pas seulement la liste blanche. Le 11/10
+ *  Beds24 a refusé la liaison des prix par six `warnings` dont le texte, sous
+ *  des clés hors liste, avait été réduit à `{}`. Copie brute `raw` (JSON de
+ *  l'élément, 600 caractères) : elle rend visible ce que la réduction jette
+ *  quand les clés scalaires manquent (clés imbriquées seulement). */
+function keepMotif(m: unknown): unknown {
+  if (!m || typeof m !== "object" || Array.isArray(m)) return keepFields(m, 1);
+  const out: Record<string, unknown> = { raw: truncate(JSON.stringify(m), 600) };
+  for (const [k, val] of Object.entries(m as Record<string, unknown>)) {
+    if (val === null || ["string", "number", "boolean"].includes(typeof val)) out[k] = typeof val === "string" ? truncate(val, 2000) : val;
+  }
+  return out;
+}
+
+/** Texte d'un motif (élément de errors/warnings/info), mot pour mot. Sans clé
+ *  scalaire, le JSON brut de l'élément est donné (« {} — brut : … ») ; un
+ *  élément vraiment vide reste « {} (Beds24 n'a rien dit) ». */
+export function motifText(m: unknown): string {
+  if (typeof m === "string") return m;
+  if (!m || typeof m !== "object") return String(m);
+  const o = m as Record<string, unknown>;
+  const entries = Object.entries(o).filter(([k, val]) => k !== "raw" && (val === null || ["string", "number", "boolean"].includes(typeof val)));
+  if (entries.length === 0) {
+    // `raw` déjà posé (élément gardé) ou JSON de l'élément brut (réponse reçue).
+    const brut = typeof o.raw === "string" ? o.raw : truncate(JSON.stringify(o), 600);
+    return brut === "{}" ? "{} (Beds24 n'a rien dit)" : `{} — brut : ${brut}`;
+  }
+  const field = typeof o.field === "string" && o.field ? `${o.field} : ` : "";
+  if (typeof o.message === "string") {
+    const rest = entries.filter(([k]) => k !== "message" && k !== "field");
+    return `${field}${o.message}${rest.length ? ` [${rest.map(([k, val]) => `${k}=${String(val)}`).join(", ")}]` : ""}`;
+  }
+  return entries.map(([k, val]) => `${k}=${String(val)}`).join(", ");
+}
+
+function keepFields(v: unknown, depth = 0): unknown {
+  if (Array.isArray(v)) return v.slice(0, 50).map((x) => keepFields(x, depth));
+  if (!v || typeof v !== "object") return typeof v === "string" ? truncate(v, 2000) : v;
+  if (depth > 4) return "…";
+  const out: Record<string, unknown> = {};
+  for (const k of KEPT_FIELDS) {
+    if (!(k in (v as Record<string, unknown>))) continue;
+    const val = (v as Record<string, unknown>)[k];
+    out[k] = MOTIF_LISTS.has(k) && Array.isArray(val) ? val.slice(0, 50).map(keepMotif) : keepFields(val, depth + 1);
+  }
+  return out;
+}
+
+/** Réponse Beds24 gardée pour l'audit et le diagnostic (liste blanche ci-dessus). */
+export function rawForAudit(data: unknown): unknown {
+  return keepFields(data);
+}
+
 /** L'API v2 répond parfois 200 avec un échec par élément
  *  ({ success:false, errors:[…] } par room) : un calendrier partiellement
  *  rejeté passait pour un push réussi. On remonte ces échecs en erreur. */
@@ -97,17 +188,14 @@ function collectFailures(data: unknown): string[] {
     const text = Array.isArray(errs)
       ? errs
           .map((e) => {
-            if (e && typeof e === "object") {
-              const o = e as Record<string, unknown>;
-              const field = typeof o.field === "string" && o.field ? `${o.field} : ` : "";
-              return `${field}${typeof o.message === "string" ? o.message : JSON.stringify(o)}`;
-            }
-            return String(e);
+            return motifText(e);
           })
           .join(" ; ")
       : typeof errs === "string"
         ? errs
-        : JSON.stringify(errs ?? "échec");
+        : errs != null
+          ? JSON.stringify(rawForAudit(errs))
+          : withoutErrors(item);
     return `${target != null ? `#${String(target)} ` : ""}${text}`;
   };
   // Les POST v2 (POST /properties, POST /inventory/rooms/calendar…) répondent
@@ -182,9 +270,19 @@ export async function beds24Fetch<T>(
     );
   }
   init.onHeaders?.(res.headers);
-  const data = (await res.json().catch(() => ({}))) as T & { success?: boolean; error?: string };
+  // Le texte d'abord : un corps qui n'est pas du JSON reste lisible dans l'erreur.
+  const text = await res.text().catch(() => "");
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
+    const msg = `Beds24 ${path} → ${res.status} réponse non JSON : ${truncate(text, 500)}`;
+    if (res.ok) throw new Beds24Error(msg, res.status, method !== "GET" ? "inconnu" : "refus");
+    parsed = { error: `réponse non JSON : ${truncate(text, 500)}` };
+  }
+  const data = parsed as T & { success?: boolean; error?: string };
   if (!res.ok) {
-    throw new Beds24Error(`Beds24 ${path} → ${res.status} ${data.error ?? ""}`.trim(), res.status, res.status >= 500 ? "inconnu" : "refus");
+    throw new Beds24Error(`Beds24 ${path} → ${res.status} ${data.error ?? ""}`.trim(), res.status, res.status >= 500 ? "inconnu" : "refus", rawForAudit(data));
   }
   const failures = collectFailures(data);
   if (failures.length > 0) {
@@ -195,6 +293,7 @@ export async function beds24Fetch<T>(
       `Beds24 ${path} → ${res.status} mais ${failures.length} élément(s) refusé(s) : ${failures.slice(0, 3).join(" · ")}`,
       res.status,
       partial ? "inconnu" : "refus",
+      rawForAudit(data),
     );
   }
   return data;

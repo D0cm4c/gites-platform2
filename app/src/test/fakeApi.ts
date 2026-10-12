@@ -97,7 +97,25 @@ export function makeFakeApi(extra: Handler[] = []) {
     (c) => (c.path === "/overview" ? { body: { property: { id: 1, name: "x" }, today: "2026-10-10", kpis: { balanceDueTotalCents: 0, balanceDueCount: 0 }, alerts: { overdueBalances: [], activeHolds: [], newEmails: 0 } } } : undefined),
     (c) => (c.path === "/bookings/7" && c.method === "GET" ? { body: { booking: BOOKING, payments: [], emails: [], history: [] } } : undefined),
     (c) => (c.path === "/guests/3" ? { body: { guest: { id: 3, email: "oudewaeter@example.com", firstName: "Gwenola", lastName: "Oudewaeter", phone: "+32 470 00 01 05" } } } : undefined),
-    (c) => (c.method !== "GET" ? { body: { ok: true } } : undefined),
+    // Simulation d'annulation : le plan que calcule le serveur (arrhes 300 €, solde 700 € payés).
+    (c) => {
+      const body = c.body as { simuler?: boolean; par?: string } | undefined;
+      if (c.method !== "POST" || !/^\/bookings\/\d+\/cancel$/.test(c.path) || !body?.simuler) return undefined;
+      const owner = body.par === "proprietaire";
+      return {
+        body: {
+          ok: true,
+          simule: true,
+          plan: {
+            mode: "arrhes", par: owner ? "proprietaire" : "locataire", paidCents: 100000, arrhesCents: 30000,
+            keptCents: owner ? 0 : 30000, refundCents: owner ? 100000 : 70000,
+            stripeRefunds: [], stripeRefundCents: owner ? 100000 : 70000, manualRefundCents: 0,
+            indemnityCents: owner ? 30000 : 0, forceMajeure: false, sejourEntame: false, note: "",
+          },
+        },
+      };
+    },
+    (c) => (c.method !== "GET" ? { body: { ok: true, refunds: [] } } : undefined),
   ];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));

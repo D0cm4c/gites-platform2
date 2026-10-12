@@ -22,6 +22,7 @@ const nuits = (n: string) => (n === "1" ? "1 nacht" : `${n} nachten`);
 
 const EXACT: Record<string, string> = {
   "domaine inconnu": "onbekend domein",
+  "acceptation des conditions générales requise": "aanvaarding van de algemene voorwaarden vereist",
   "dates invalides (format AAAA-MM-JJ)": "ongeldige data (formaat JJJJ-MM-DD)",
   "le départ doit suivre l'arrivée": "het vertrek moet na de aankomst komen",
   "l'arrivée ne peut pas être dans le passé": "de aankomst kan niet in het verleden liggen",

@@ -42,8 +42,9 @@
     // ⚠️ 8788 en local : le 8787 est occupé par la surcouche Legal Ops (LaunchAgent).
     "PUBLIC_BASE_URL": "http://localhost:8788",
     // Les clés sensibles vont dans .dev.vars (local) ou `wrangler secret put` (prod) :
-    // STRIPE_SECRET_KEY (sk_test_… UNIQUEMENT tant que l'entité n'est pas tranchée),
-    // STRIPE_WEBHOOK_SECRET, RESEND_API_KEY, RESEND_FROM, ADMIN_TOKEN.
+    // RESEND_API_KEY, RESEND_FROM, ADMIN_TOKEN. Stripe : un compte par propriété, clés
+    // saisies dans Réglages > Comptes Stripe ; STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY
+    // et STRIPE_WEBHOOK_SECRET ne sont plus qu'un repli (docs/paiements-stripe.md).
     "EMAILS_ENABLED": "false"
   },
 

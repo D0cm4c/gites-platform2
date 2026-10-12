@@ -128,7 +128,7 @@ export function IcalPage() {
 
 function FeedPanel({ feed, units, onClose, syncText }: { feed: IcalFeed | null; units: UnitFull[]; onClose: () => void; syncText: (r: FeedSyncResult) => string }) {
   const { t } = useLingui();
-  const init = useMemo(() => ({ unitId: String(feed?.unitId ?? units[0]?.id ?? ""), name: feed?.name ?? "", url: feed?.url ?? "", active: feed?.active ?? true }), [feed, units]);
+  const init = useMemo(() => ({ unitId: String(feed?.unitId ?? units[0]?.id ?? ""), name: feed?.name ?? "", url: feed?.url ?? "", active: feed?.active ?? true, departureDayIncluded: feed?.departureDayIncluded ?? false }), [feed, units]);
   const [v, setV] = useState(init);
   const [asking, setAsking] = useState(false);
   const a = useAction();
@@ -152,7 +152,7 @@ function FeedPanel({ feed, units, onClose, syncText }: { feed: IcalFeed | null; 
             disabled={!valid || (!dirty && !!feed) || a.state.status === "busy"}
             onClick={async () => {
               const ok = await a.run(
-                () => (feed ? api(`/ical-feeds/${feed.id}`, { method: "PATCH", body: { name: v.name.trim(), url: v.url.trim(), active: v.active } }) : api("/ical-feeds", { method: "POST", body: { unitId: Number(v.unitId), name: v.name.trim(), url: v.url.trim() } })),
+                () => (feed ? api(`/ical-feeds/${feed.id}`, { method: "PATCH", body: { name: v.name.trim(), url: v.url.trim(), active: v.active, departureDayIncluded: v.departureDayIncluded } }) : api("/ical-feeds", { method: "POST", body: { unitId: Number(v.unitId), name: v.name.trim(), url: v.url.trim(), departureDayIncluded: v.departureDayIncluded } })),
                 feed ? t`C'est fait. Calendrier enregistré.` : t`C'est fait. Calendrier ajouté ; il sera lu dans les 15 minutes.`,
               );
               if (ok) onClose();
@@ -176,6 +176,14 @@ function FeedPanel({ feed, units, onClose, syncText }: { feed: IcalFeed | null; 
       <TextInput mt="sm" size="md" label={t`Nom`} placeholder={t`Par exemple : Airbnb, le Moulin`} value={v.name} onChange={(e) => setV({ ...v, name: e.currentTarget.value })} />
       <TextInput mt="sm" size="md" label={t`Adresse iCal`} placeholder="https://www.airbnb.com/calendar/ical/…" value={v.url} onChange={(e) => setV({ ...v, url: e.currentTarget.value })} />
       {feed ? <Switch mt="lg" size="md" label={t`Lu toutes les 15 minutes`} checked={v.active} onChange={(e) => setV({ ...v, active: e.currentTarget.checked })} /> : null}
+      <Switch
+        mt="md"
+        size="md"
+        label={t`Le jour du départ est inclus dans ce calendrier`}
+        description={t`À cocher pour un agenda tenu à la main qui bloque aussi le jour du départ (du 22 au 26 = départ le 26). Airbnb, Booking et Beds24 laissent le jour du départ libre : pour eux, ne pas cocher.`}
+        checked={v.departureDayIncluded}
+        onChange={(e) => setV({ ...v, departureDayIncluded: e.currentTarget.checked })}
+      />
       {a.state.status === "error" ? <ErrorLine text={a.state.text} /> : null}
       {sync.state.status === "error" ? <ErrorLine text={sync.state.text} /> : null}
       <Confirm

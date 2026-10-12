@@ -165,7 +165,7 @@ function PlanView({ plan }: { plan: Beds24PropertyPlan }) {
             {r.rackRate ? t`, prix de base ${r.rackRate} ${plan.currency}` : ""}
             {r.cleaningFee ? t`, ménage ${r.cleaningFee} ${plan.currency}` : ""}
             {r.description ? t`, description` : ""}
-            {r.featureCodes.length ? t`, équipements ${r.featureCodes.join(" ")}` : ""}
+            {r.featureCodes.length ? t`, équipements ${r.featureCodes.flat().join(" ")}` : ""}
           </li>
         ))}
       </ul>

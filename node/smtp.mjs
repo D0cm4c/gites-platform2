@@ -9,6 +9,8 @@
 //   - AUTH PLAIN, sinon AUTH LOGIN (selon ce qu'annonce EHLO) ;
 //   - un destinataire, texte brut UTF-8 en quoted-printable, objet en
 //     encoded-word RFC 2047, Message-ID et Date posés ici ;
+//   - en option une version HTML (multipart/alternative) et des pièces
+//     jointes en base64 (multipart/mixed) : le PDF de la confirmation ;
 //   - délai global (30 s par défaut) : un serveur muet ne bloque jamais la
 //     requête qui envoie.
 // Le mot de passe n'apparaît dans aucun message d'erreur ni journal.
@@ -109,24 +111,96 @@ export function quotedPrintable(text) {
   return lines.join("\r\n");
 }
 
+/** Identifiants de fil (In-Reply-To, References) : des <identifiants> et rien d'autre,
+ *  repliés à la ligne tous les trois identifiants. null si la valeur est vide. */
+function threadHeader(label, value) {
+  if (value == null || String(value).trim() === "") return null;
+  const ids = String(value).trim().split(/\s+/);
+  if (!ids.every((id) => /^<[^<>\s]{1,300}>$/.test(id))) throw new Error(`SMTP : ${label} invalide`);
+  const lines = [];
+  for (let i = 0; i < ids.length; i += 3) lines.push(ids.slice(i, i + 3).join(" "));
+  return lines.join("\r\n ");
+}
+
 /** Message RFC 5322 complet, prêt pour DATA (sans le point final). */
-export function buildMessage({ from, to, subject, text, messageId, date = new Date() }) {
+
+/** Nom de fichier sûr pour un en-tête MIME : ASCII, sans guillemet, saut de ligne ni séparateur de chemin. */
+export function safeFilename(name) {
+  const cleaned = String(name).replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^\.+/, "").slice(0, 80);
+  return cleaned || "piece-jointe";
+}
+
+/** Base64 en lignes de 76 caractères (RFC 2045). */
+function base64Lines(content) {
+  const b64 = Buffer.from(content).toString("base64");
+  return (b64.match(/.{1,76}/g) || []).join("\r\n");
+}
+
+function textPart(contentType, text) {
+  return [`Content-Type: ${contentType}; charset=UTF-8`, "Content-Transfer-Encoding: quoted-printable", "", quotedPrintable(text)].join("\r\n");
+}
+
+/** Message RFC 5322 complet, prêt pour DATA (sans le point final). */
+export function buildMessage({ from, to, subject, text, html, attachments = [], messageId, inReplyTo, references, date = new Date() }) {
+  const inReplyToValue = threadHeader("In-Reply-To", inReplyTo);
+  const referencesValue = threadHeader("References", references || inReplyTo);
   const headers = [
     `From: ${encodeFromHeader(from)}`,
     `To: ${to}`,
     `Subject: ${encodeHeaderWord(subject)}`,
     `Date: ${date.toUTCString().replace("GMT", "+0000")}`,
     `Message-ID: ${messageId}`,
+    ...(inReplyToValue ? [`In-Reply-To: ${inReplyToValue}`] : []),
+    ...(referencesValue ? [`References: ${referencesValue}`] : []),
     "MIME-Version: 1.0",
-    "Content-Type: text/plain; charset=UTF-8",
-    "Content-Transfer-Encoding: quoted-printable",
   ];
-  const body = quotedPrintable(text)
+  let body;
+  if (!html && attachments.length === 0) {
+    // cas historique : un seul morceau de texte
+    headers.push("Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: quoted-printable");
+    body = quotedPrintable(text);
+  } else {
+    const tag = randomBytes(12).toString("hex");
+    const body1 = html
+      ? (() => {
+          const alt = `=_alt_${tag}`;
+          return {
+            type: `multipart/alternative; boundary="${alt}"`,
+            text: [`--${alt}`, textPart("text/plain", text), `--${alt}`, textPart("text/html", html), `--${alt}--`].join("\r\n"),
+          };
+        })()
+      : { type: "text/plain; charset=UTF-8", text: null };
+    if (attachments.length === 0) {
+      headers.push(`Content-Type: ${body1.type}`);
+      body = body1.text;
+    } else {
+      const mixed = `=_mix_${tag}`;
+      headers.push(`Content-Type: multipart/mixed; boundary="${mixed}"`);
+      const parts = [];
+      if (body1.text !== null) parts.push(`--${mixed}`, `Content-Type: ${body1.type}`, "", body1.text);
+      else parts.push(`--${mixed}`, textPart("text/plain", text));
+      for (const a of attachments) {
+        const type = /^[a-z]+\/[a-z0-9.+-]+$/i.test(a.contentType) ? a.contentType : "application/octet-stream";
+        const name = safeFilename(a.filename);
+        parts.push(
+          `--${mixed}`,
+          `Content-Type: ${type}; name="${name}"`,
+          "Content-Transfer-Encoding: base64",
+          `Content-Disposition: attachment; filename="${name}"`,
+          "",
+          base64Lines(a.content),
+        );
+      }
+      parts.push(`--${mixed}--`);
+      body = parts.join("\r\n");
+    }
+  }
+  // dot-stuffing (RFC 5321 § 4.5.2) : une ligne qui commence par un point
+  const stuffed = body
     .split("\r\n")
-    // dot-stuffing (RFC 5321 § 4.5.2) : une ligne qui commence par un point
     .map((l) => (l.startsWith(".") ? `.${l}` : l))
     .join("\r\n");
-  return `${headers.join("\r\n")}\r\n\r\n${body}`;
+  return `${headers.join("\r\n")}\r\n\r\n${stuffed}`;
 }
 
 /** Lecteur de réponses SMTP (multi-lignes « 250-… » jusqu'à « 250 … »). */
@@ -188,7 +262,11 @@ export async function sendSmtp(config, mail, options = {}) {
   checkHeaderValue("le destinataire", to);
   checkHeaderValue("l'expéditeur", from);
   checkHeaderValue("l'objet", mail.subject);
+  // refus avant toute connexion : un identifiant de fil qui n'est pas un <identifiant> ne part pas
+  threadHeader("In-Reply-To", mail.inReplyTo);
+  threadHeader("References", mail.references);
   if (!/^[^\s@<>]+@[^\s@<>]+$/.test(to)) throw new Error("SMTP : adresse du destinataire invalide");
+  if (!/^[^\s@<>]+@[^\s@<>]+$/.test(envelopeFrom)) throw new Error("SMTP : adresse de l'expéditeur (MAIL_FROM) invalide");
   const timeoutMs = options.timeoutMs ?? 30_000;
   // SNI : un nom d'hôte seulement (Node refuse une adresse IP comme servername)
   const tlsOptions = { ...(isIP(host) ? {} : { servername: host }), ...(options.tls || {}) };
@@ -273,7 +351,7 @@ export async function sendSmtp(config, mail, options = {}) {
     await expect([250, 251], "RCPT TO");
     send("DATA");
     await expect([354], "DATA");
-    socket.write(`${buildMessage({ from, to, subject: mail.subject, text: mail.text, messageId })}\r\n.\r\n`);
+    socket.write(`${buildMessage({ from, to, subject: mail.subject, text: mail.text, html: mail.html, attachments: mail.attachments, messageId, inReplyTo: mail.inReplyTo, references: mail.references })}\r\n.\r\n`);
     await expect([250], "fin du message");
     send("QUIT");
     // la réponse à QUIT n'a pas d'importance : le mail est accepté

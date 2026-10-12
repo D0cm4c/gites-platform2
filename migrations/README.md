@@ -118,6 +118,7 @@ commandes interdites sans accord explicite du propriétaire — voir
 | `0020` | registre des personnes hébergées |
 | `0021` | galerie de photos par hébergement (`unit_photos`, seed depuis `scripts/photos-sources.json`, issue #32) |
 | `0024` | messagerie des canaux par Beds24 (`channel_messages`, relevée au cron, recopiée dans `messages` avec `channel = 'beds24'`) ; clés d'accès de service (`service_keys`, `Bearer svc:<clé>`, SHA-256 seulement) |
+| `0036` | conditions générales de location v3.1 pour les deux domaines : arrhes acquises quand le client annule, indemnité égale aux arrhes quand l'exploitant annule, résumé « Comment ça se passe », v3 archivée sous `cgv_text_avant_3_1` |
 
 Le détail des règles métier qu'elles encodent est dans le
 [`README.md`](../README.md) racine.

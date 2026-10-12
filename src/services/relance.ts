@@ -39,7 +39,7 @@ import {
   manualBlocksInWindow,
   type PropertyRow,
 } from "../db/repo";
-import { formatDateFr, queueEmail } from "./email";
+import { formatDateFr, queueEmail, refSubject } from "./email";
 
 /** Délai après l'expiration du blocage avant d'envoyer la relance (issue : « proposer 24 h »). */
 export const ABANDON_DELAY_HOURS = 24;
@@ -162,7 +162,7 @@ export function buildAbandonReminderEmail(
 ): { subject: string; bodyText: string } {
   const bonjour = b.guestFirstName ? `Bonjour ${b.guestFirstName},` : "Bonjour,";
   return {
-    subject: `Votre réservation en cours — ${b.unitName} du ${formatDateFr(b.checkin)} (${property.name})`,
+    subject: refSubject(b.reference, `Votre réservation en cours — ${b.unitName} du ${formatDateFr(b.checkin)} (${property.name})`),
     bodyText: [
       bonjour,
       ``,

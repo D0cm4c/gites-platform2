@@ -35,6 +35,8 @@ export function SettingsPage() {
       items: [
         { to: "/reglages/clients", label: t`Clients`, hint: t`Coordonnées et séjours de chaque client` },
         { to: "/reglages/paiements", label: t`Paiements reçus`, hint: t`Tout ce qui a été encaissé ou attendu` },
+        { to: "/reglages/encaissements", label: t`Encaissements Stripe`, hint: t`Ce qui est arrivé sur chaque compte Stripe : frais, net, total par mois, export` },
+        { to: "/reglages/stripe", label: t`Comptes Stripe`, hint: t`Les clés de chaque propriété, test ou réel, l'adresse du webhook` },
         { to: "/reglages/chiffres", label: t`Chiffres de l'année`, hint: t`Remplissage, revenus, comparaison avec l'an passé, exports` },
         { to: "/reglages/modeles", label: t`Modèles de réponse`, hint: t`Les textes tout prêts pour répondre aux clients : accès, horaires, solde, après le séjour` },
       ],

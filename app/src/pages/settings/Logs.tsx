@@ -23,6 +23,7 @@ const ACTIONS: Record<string, MessageDescriptor> = {
   "payment.manual": msg`paiement noté à la main`,
   "email.balance_reminder": msg`rappel du solde envoyé`,
   "email.voucher_resent": msg`confirmation renvoyée`,
+  "email.confirmation_resent": msg`confirmation et conditions générales renvoyées`,
   "message.reply": msg`message envoyé à un client`,
   "rate.override": msg`prix fixé à la main`,
   "rate.override_clear": msg`retour au prix de saison`,
@@ -68,6 +69,7 @@ function actionLabel(a: string): string {
 
 const KINDS: Record<string, MessageDescriptor> = {
   voucher: msg`confirmation de réservation`,
+  confirmation: msg`confirmation et conditions générales`,
   balance_reminder: msg`rappel du solde`,
   message: msg`message`,
   auto_reply: msg`accusé de réception`,

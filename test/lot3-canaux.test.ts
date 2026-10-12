@@ -3,10 +3,11 @@
 // Aucun appel réseau réel : fetch est remplacé pour api.beds24.com (faux serveur).
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb, type TestDb } from "./helpers/d1";
+import { FauxBeds24 } from "./helpers/beds24-faux";
 import { Router } from "../src/api/router";
 import { registerAdminRoutes } from "../src/api/admin";
 import {
-  airbnbPreview, airbnbSettingsBody, derivedLines, linkMultiplier, NO_AIRBNB_PROMOTIONS, normalizeAirbnbPromotions, priceRulesFor,
+  airbnbPreview, airbnbSettingsBody, derivedLines, linkMultiplier, NO_AIRBNB_PROMOTIONS, normalizeAirbnbPromotions, parseLiveRules, priceRulesFor,
 } from "../src/core/channel-promotions";
 import { DEFAULT_CHANNEL_MARKUPS } from "../src/core/price-guardrails";
 import { fromAirbnb, fromBooking, pullChannelReviews, REVIEWS_STATE_KEY } from "../src/services/beds24-reviews";
@@ -31,9 +32,13 @@ let reviewPages: Record<string, unknown[][]> = {};
 let airbnbReviews: Record<string, unknown[]> = {};
 let bookingReviews: unknown[] = [];
 const realFetch = globalThis.fetch;
+/** Lignes de prix des chambres : faux Beds24 à état, qui valide le schéma apiV2.yaml. */
+const faux = new FauxBeds24();
 
 beforeAll(async () => {
   t = await createTestDb();
+  faux.seed(344555, [711713, 711714]);
+  faux.seed(999001, [999101]);
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input instanceof Request ? input.url : input));
     if (url.hostname !== "api.beds24.com") return realFetch(input as RequestInfo, init);
@@ -43,9 +48,10 @@ beforeAll(async () => {
     calls.push({ method, path, query: url.searchParams, body });
     if (path === "/authentication/token") return new Response(JSON.stringify({ token: "tok" }), { status: 200 });
     if (refuse === path) return new Response(JSON.stringify({ success: false, error: "refusé par le faux Beds24" }), { status: 400 });
-    if (path === "/properties" && refuseProperty != null && (body as Array<{ id: number }>)[0]?.id === refuseProperty) {
+    if (path === "/properties" && method === "POST" && refuseProperty != null && (body as Array<{ id: number }>)[0]?.id === refuseProperty) {
       return new Response(JSON.stringify({ success: false, error: "propriété refusée" }), { status: 400 });
     }
+    if (path === "/properties") return method === "GET" ? faux.get(url.searchParams) : faux.post(body);
     const paged = reviewPages[`${path}?${url.searchParams.get("roomId") ?? url.searchParams.get("propertyId")}`];
     if (paged) {
       const page = Number(url.searchParams.get("page") ?? "1");
@@ -62,6 +68,10 @@ afterAll(async () => {
   await t.dispose();
 });
 beforeEach(() => {
+  // État Beds24 explicite à chaque test : lignes de prix d'origine (ligne 1 seule).
+  faux.props.clear();
+  faux.seed(344555, [711713, 711714]);
+  faux.seed(999001, [999101]);
   calls = [];
   refuse = null;
   refuseProperty = null;
@@ -110,12 +120,16 @@ describe("règles pures", () => {
     const lines = derivedLines(DEFAULT_CHANNEL_MARKUPS);
     expect(lines.map((l) => [l.beds24Channel, l.multiplier, l.priceId])).toEqual([["airbnb", 1.18, 2], ["booking", 1.18, 3], ["vrbo", 1.15, 4]]);
     expect(linkMultiplier(17.5)).toBe(1.175);
-    const rules = priceRulesFor(lines, true) as Array<Record<string, any>>;
+    const live = parseLiveRules([{ id: 1, name: "Prix 1", minimumStay: 2, priceFor: { type: "maxCapacity" }, channels: { airbnb: { enabled: true } } }]);
+    const plan = priceRulesFor(lines, true, 711713, live);
+    if (!plan.ok) throw new Error(plan.message);
+    const rules = plan.rules as Array<Record<string, any>>;
     expect(rules[0]).toEqual({ id: 1, channels: { airbnb: { enabled: false }, booking: { enabled: false }, vrbo: { enabled: false } } });
-    expect(rules[2]).toMatchObject({ id: 3, priceLinking: { priceId: 1, offsetMultiplier: 1.18 }, channels: { booking: { enabled: true } } });
-    const off = priceRulesFor(lines, false) as Array<Record<string, any>>;
-    expect(off[0]!.channels.airbnb.enabled).toBe(true);
-    expect(off[1]!.priceLinking).toEqual({ priceId: null });
+    // lien vers la ligne 1 de la MÊME chambre, occupation et séjour minimum repris de la ligne 1
+    expect(rules[2]).toMatchObject({ id: 3, minimumStay: 2, priceFor: { type: "maxCapacity" }, priceLinking: { roomId: 711713, priceId: 1, offsetMultiplier: 1.18 }, channels: { booking: { enabled: true } } });
+    // désactiver sans ligne dérivée chez Beds24 : seule la ligne 1 part, rien n'est créé
+    const off = priceRulesFor(lines, false, 711713, live);
+    expect(off.ok && off.rules).toEqual([{ id: 1, channels: { airbnb: { enabled: true }, booking: { enabled: true }, vrbo: { enabled: true } } }]);
   });
 
   it("corps Airbnb : une entrée par chambre, remises à zéro quand un palier manque", () => {
@@ -198,7 +212,7 @@ describe("prix dérivés par canal (routes)", () => {
     const order = calls.filter((c) => c.method === "POST").map((c) => c.path);
     expect(order[0]).toBe("/properties");
     expect(order).toContain("/inventory/rooms/calendar");
-    const rules = (calls.find((c) => c.path === "/properties")!.body as Array<Record<string, any>>)[0]!.roomTypes[0].priceRules;
+    const rules = (calls.find((c) => c.path === "/properties" && c.method === "POST")!.body as Array<Record<string, any>>)[0]!.roomTypes[0].priceRules;
     expect(rules[1]).toMatchObject({ priceLinking: { priceId: 1, offsetMultiplier: 1.18 } });
     const after = calls.filter((c) => c.path === "/inventory/rooms/calendar").at(-1)!;
     const direct = (after.body as Array<{ calendar: Array<{ price1?: number }> }>)[0]!.calendar.find((d) => d.price1 != null)!.price1!;
@@ -212,16 +226,17 @@ describe("prix dérivés par canal (routes)", () => {
     const r = await api("PUT", "/api/admin/channel-markups", { channels: [{ channel: "airbnb", label: "Airbnb", markupPct: 20 }, { channel: "booking", label: "Booking.com", markupPct: 18 }, { channel: "abritel", label: "Abritel / Vrbo", markupPct: 15 }] });
     expect(r.status).toBe(200);
     expect(r.data.linking).toEqual({ resent: true });
-    const post = calls.find((c) => c.path === "/properties")!;
+    const post = calls.find((c) => c.path === "/properties" && c.method === "POST")!;
     expect((post.body as Array<Record<string, any>>)[0]!.roomTypes[0].priceRules[1].priceLinking.offsetMultiplier).toBe(1.2);
     expect((await api("GET", "/api/admin/channels/price-linking")).data.upToDate).toBe(true);
   });
 
   it("désactiver : les liens sont défaits, la ligne 1 rendue à tous les canaux", async () => {
+    expect((await api("POST", "/api/admin/channels/price-linking", { enabled: true })).status).toBe(200);
     calls = [];
     const r = await api("POST", "/api/admin/channels/price-linking", { enabled: false });
     expect(r.data.enabled).toBe(false);
-    const rules = (calls.find((c) => c.path === "/properties")!.body as Array<Record<string, any>>)[0]!.roomTypes[0].priceRules;
+    const rules = (calls.find((c) => c.path === "/properties" && c.method === "POST")!.body as Array<Record<string, any>>)[0]!.roomTypes[0].priceRules;
     expect(rules[0].channels.airbnb.enabled).toBe(true);
     expect(rules[1].priceLinking).toEqual({ priceId: null });
   });
@@ -283,7 +298,7 @@ describe("revue Codex 1", () => {
       refuseProperty = 999001;
       const r = await api("POST", "/api/admin/channels/price-linking", { enabled: true });
       expect(r.status).toBe(502);
-      const posts = calls.filter((c) => c.path === "/properties").map((c) => (c.body as Array<{ id: number; roomTypes: Array<{ priceRules: Array<Record<string, any>> }> }>)[0]!);
+      const posts = calls.filter((c) => c.path === "/properties" && c.method === "POST").map((c) => (c.body as Array<{ id: number; roomTypes: Array<{ priceRules: Array<Record<string, any>> }> }>)[0]!);
       // aller sur 344555, refus sur 999001, retour arrière sur 344555 (liens défaits)
       expect(posts.map((p) => p.id)).toEqual([344555, 999001, 344555]);
       expect(posts[2]!.roomTypes[0]!.priceRules[1]!.priceLinking).toEqual({ priceId: null });
@@ -333,10 +348,11 @@ describe("revue Codex 2", () => {
       refuseProperty = 999001;
       const r = await api("PUT", "/api/admin/channel-markups", { channels: before.map((c) => (c.channel === "airbnb" ? { ...c, markupPct: 25 } : c)) });
       expect(r.data.linking.resent).toBe(false);
-      const posts = calls.filter((c) => c.path === "/properties").map((c) => (c.body as Array<{ id: number; roomTypes: Array<{ priceRules: Array<Record<string, any>> }> }>)[0]!);
+      const posts = calls.filter((c) => c.path === "/properties" && c.method === "POST").map((c) => (c.body as Array<{ id: number; roomTypes: Array<{ priceRules: Array<Record<string, any>> }> }>)[0]!);
       expect(posts.map((p) => p.id)).toEqual([344555, 999001, 344555]);
       expect(posts[0]!.roomTypes[0]!.priceRules[1]!.priceLinking.offsetMultiplier).toBe(1.25);
-      expect(posts[2]!.roomTypes[0]!.priceRules[1]!.priceLinking).toMatchObject({ priceId: 1, offsetMultiplier: 1 + old / 100 });
+      // retour arrière : seul l'écart part (la ligne Airbnb, à son ancien multiplicateur)
+      expect(posts[2]!.roomTypes[0]!.priceRules.find((r) => r.id === 2)!.priceLinking).toMatchObject({ priceId: 1, offsetMultiplier: 1 + old / 100 });
       expect((await api("GET", "/api/admin/channels/price-linking")).data.upToDate).toBe(false);
     } finally {
       await t.db.prepare("UPDATE properties SET beds24_property_id = NULL WHERE id = 2").run();

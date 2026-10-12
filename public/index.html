@@ -287,13 +287,13 @@
     <h2>Contact</h2>
     <div class="cols">
       <form id="contactForm" autocomplete="on">
-        <p class="lead" style="font-size:15px">Une question avant de réserver ? Votre message arrive directement dans notre système — nous vous répondons rapidement.</p>
-        <label for="cName">Nom</label><input id="cName" required>
-        <label for="cEmail">Email</label><input id="cEmail" type="email" required>
+        <p class="lead" style="font-size:15px">Une question avant de réserver ? Votre message est envoyé à l'équipe des gîtes. Nous répondons par e-mail, à l'adresse que vous indiquez ici : il n'y a pas de chat en direct.</p>
+        <label for="cName">Nom</label><input id="cName" required autocomplete="name">
+        <label for="cEmail">Email</label><input id="cEmail" type="email" inputmode="email" autocomplete="email" required>
         <label for="cMsg">Message</label><textarea id="cMsg" rows="4" required></textarea>
         <input id="cWebsite" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
         <p style="margin-top:16px"><button class="btn v" type="submit">Envoyer</button></p>
-        <div class="note-ok" id="cNote"></div>
+        <div class="note-ok" id="cNote" role="status"></div>
       </form>
       <div class="coord">
         <p><span class="t">Adresse</span><br>Hameau du Pré Moré<br>6890 Redu (Daverdisse)<br>Ardenne belge</p>

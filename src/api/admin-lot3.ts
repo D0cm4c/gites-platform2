@@ -10,9 +10,9 @@ import { apiError, json, readJson, type Router } from "./router";
 import { currentUser, guard } from "./admin";
 import { audit, getProperty, listProperties, listUnits } from "../db/repo";
 import { getSetting, setSetting } from "../services/settings";
-import { Beds24Error, beds24Configured, beds24Fetch, beds24WritesAllowed } from "../services/beds24";
+import { Beds24Error, beds24Configured, beds24Fetch, beds24WritesAllowed, rawForAudit } from "../services/beds24";
 import { triggerBeds24PushAll } from "../services/beds24-sync";
-import { CHANNEL_MARKUPS_KEY, PUSH_CHANNEL_KEY, parseChannelMarkups, parsePushChannel, pushMarkupPct, type ChannelMarkup } from "../core/price-guardrails";
+import { CHANNEL_MARKUPS_KEY, PUSH_CHANNEL_KEY, parseChannelMarkups, parsePushChannel, pushMarkupPct } from "../core/price-guardrails";
 import {
   AIRBNB_PROMOTIONS_KEY,
   AIRBNB_PROMOTIONS_SENT_KEY,
@@ -22,10 +22,15 @@ import {
   airbnbPreview,
   airbnbSettingsBody,
   derivedLines,
+  describeRoomRules,
   normalizeAirbnbPromotions,
   parseAirbnbPromotions,
+  parseLiveRules,
   parsePriceLinking,
   priceLinkingBody,
+  priceRulesFor,
+  restoreRules,
+  type LiveRule,
 } from "../core/channel-promotions";
 import { REVIEWS_LOW_SCORE, reviewsSummary } from "../services/beds24-reviews";
 
@@ -69,9 +74,14 @@ function parseSent(raw: string | null): { at: string; by: string; promotions: un
   }
 }
 
-function beds24Failure(e: unknown): Response {
+function beds24Failure(e: unknown, extra?: Record<string, unknown>): Response {
   if (e instanceof Beds24Error) {
-    return apiError(502, e.issue === "inconnu" ? `${e.message} — l'envoi a pu passer en partie : vérifier dans Beds24, puis renvoyer` : e.message, { code: e.issue === "inconnu" ? "beds24_unknown" : "beds24_refused" });
+    return apiError(502, e.issue === "inconnu" ? `${e.message} — l'envoi a pu passer en partie : vérifier dans Beds24, puis renvoyer` : e.message, {
+      code: e.issue === "inconnu" ? "beds24_unknown" : "beds24_refused",
+      // La réponse Beds24 telle quelle : le motif exact d'un refus.
+      ...(e.response !== undefined ? { beds24: e.response } : {}),
+      ...extra,
+    });
   }
   throw e;
 }
@@ -83,49 +93,163 @@ async function markupContext(db: D1Database) {
   return { markups, pushChannel, pushPct: pushMarkupPct(markups, pushChannel), linking };
 }
 
-/** Pose (ou défait) les prix dérivés sur toutes les chambres reliées. */
+/** Une étape de l'envoi, gardée pour l'audit et rendue en cas d'échec :
+ *  ce qui est parti chez Beds24 et ce qu'il a répondu (ids, noms de lignes de
+ *  prix et multiplicateurs : aucune donnée de voyageur). */
+export interface LinkingStep {
+  beds24PropertyId: number;
+  etape: "lecture" | "envoi" | "retour";
+  envoi?: unknown;
+  reponse?: unknown;
+  erreur?: string;
+}
+
+type Linked = Awaited<ReturnType<typeof linkedRooms>>[number];
+
+/** Lignes de prix actuelles de chaque chambre reliée, lues chez Beds24 (lecture seule). */
+async function readLiveRules(env: Env, l: Linked, journal: LinkingStep[]): Promise<Map<number, LiveRule[]>> {
+  let data: { data?: Array<{ id?: number; roomTypes?: Array<{ id?: number; priceRules?: unknown }> }> };
+  try {
+    data = await beds24Fetch(env, "/properties", { query: { id: String(l.beds24PropertyId), includePriceRules: "true", includeAllRooms: "true" } });
+  } catch (e) {
+    journal.push({ beds24PropertyId: l.beds24PropertyId, etape: "lecture", erreur: e instanceof Error ? e.message : String(e), ...(e instanceof Beds24Error ? { reponse: e.response } : {}) });
+    throw e;
+  }
+  const prop = (data.data ?? []).find((p) => p.id === l.beds24PropertyId);
+  const out = new Map<number, LiveRule[]>();
+  for (const roomId of l.roomIds) {
+    const room = prop?.roomTypes?.find((r) => r.id === roomId);
+    if (!room) throw new Beds24Error(`Beds24 GET /properties : la chambre #${roomId} de la propriété #${l.beds24PropertyId} est absente de la réponse — rien n'est envoyé`);
+    const rules = parseLiveRules(room.priceRules);
+    if (!rules) throw new Beds24Error(`Beds24 GET /properties : pas de liste priceRules lisible pour la chambre #${roomId} — rien n'est envoyé`, undefined, "refus", rawForAudit(room));
+    out.set(roomId, rules);
+  }
+  return out;
+}
+
+export interface LinkingPlan {
+  beds24PropertyId: number;
+  name: string;
+  avant: Map<number, LiveRule[]>;
+  body: unknown[];
+}
+
+/** Lit l'état de chaque propriété et prépare les envois, sans rien écrire.
+ *  Une ligne de prix occupée par autre chose arrête tout avant le premier envoi. */
+async function planPriceLinking(env: Env, enabled: boolean, journal: LinkingStep[]): Promise<{ plans: LinkingPlan[]; rooms: number }> {
+  const { markups } = await markupContext(env.DB);
+  const lines = derivedLines(markups);
+  const plans: LinkingPlan[] = [];
+  let rooms = 0;
+  for (const l of await linkedRooms(env.DB)) {
+    const avant = await readLiveRules(env, l, journal);
+    const roomRules: Array<{ id: number; priceRules: Record<string, unknown>[] }> = [];
+    for (const roomId of l.roomIds) {
+      const plan = priceRulesFor(lines, enabled, roomId, avant.get(roomId) ?? []);
+      if (!plan.ok) throw new Beds24Error(plan.message);
+      roomRules.push({ id: roomId, priceRules: plan.rules });
+    }
+    rooms += l.roomIds.length;
+    plans.push({ beds24PropertyId: l.beds24PropertyId, name: l.name, avant, body: priceLinkingBody(l.beds24PropertyId, roomRules) });
+  }
+  return { plans, rooms };
+}
+
+/** Remet une propriété dans l'état lu avant l'envoi : relit, et ne renvoie
+ *  que l'écart. Rejouable : une seconde passe n'envoie rien. */
+async function restoreProperty(env: Env, p: LinkingPlan, journal: LinkingStep[]): Promise<void> {
+  const now = await readLiveRules(env, { propertyId: 0, name: p.name, beds24PropertyId: p.beds24PropertyId, roomIds: [...p.avant.keys()] }, journal);
+  const rooms: Array<{ id: number; priceRules: Record<string, unknown>[] }> = [];
+  for (const [roomId, before] of p.avant) {
+    const current = now.get(roomId) ?? [];
+    const ids = [...new Set([...before.map((r) => r.id), ...current.map((r) => r.id)])].sort((a, b) => a - b);
+    const rules = restoreRules(before, current, ids);
+    if (rules.length) rooms.push({ id: roomId, priceRules: rules });
+  }
+  if (!rooms.length) return;
+  const body = priceLinkingBody(p.beds24PropertyId, rooms);
+  try {
+    const reponse = await beds24Fetch(env, "/properties", { method: "POST", body });
+    journal.push({ beds24PropertyId: p.beds24PropertyId, etape: "retour", envoi: body, reponse: rawForAudit(reponse) });
+  } catch (e) {
+    journal.push({ beds24PropertyId: p.beds24PropertyId, etape: "retour", envoi: body, erreur: e instanceof Error ? e.message : String(e), ...(e instanceof Beds24Error ? { reponse: e.response } : {}) });
+    throw e;
+  }
+}
+
+export class PriceLinkingError extends Beds24Error {
+  constructor(message: string, status: number | undefined, issue: "refus" | "inconnu", response: unknown, public journal: LinkingStep[]) {
+    super(message, status, issue, response);
+  }
+}
+
 /** Pose (ou défait) les prix dérivés sur toutes les chambres reliées.
  *
- *  Tout ou rien (contrôle Codex) : si une propriété refuse, celles déjà
- *  passées sont remises dans l'état d'avant, pour que le réglage enregistré
- *  (prix direct poussé ou non) reste vrai partout — sinon la commission serait
- *  comptée deux fois sur une partie des annonces. Si ce retour arrière échoue
- *  aussi, l'erreur le dit : à vérifier dans Beds24. */
+ *  Tout ou rien (contrôle Codex) : si une propriété refuse, toutes celles
+ *  touchées — celle qui a refusé comprise, un refus pouvant être partiel —
+ *  sont remises dans l'état LU avant l'envoi. Si ce retour arrière échoue
+ *  aussi, l'erreur le dit avec le motif de Beds24 : `{"enabled":false}` le rejoue.
+ *  `essai` : lit et prépare, n'écrit rien. */
 export async function sendPriceLinking(
   env: Env,
   enabled: boolean,
-  /** État d'avant, remis en cas d'échec : actif ou non, et avec quelles majorations. */
-  previous?: { enabled: boolean; markups: readonly ChannelMarkup[] },
-): Promise<{ properties: number; rooms: number }> {
-  const { markups, linking } = await markupContext(env.DB);
-  const lines = derivedLines(markups);
-  const prev = previous ?? { enabled: linking.enabled, markups };
-  const prevLines = derivedLines(prev.markups);
-  const linked = await linkedRooms(env.DB);
-  const done: typeof linked = [];
-  for (const l of linked) {
+  opts: { essai?: boolean } = {},
+): Promise<{ properties: number; rooms: number; journal: LinkingStep[]; envois: unknown[] }> {
+  const journal: LinkingStep[] = [];
+  let planned: Awaited<ReturnType<typeof planPriceLinking>>;
+  try {
+    planned = await planPriceLinking(env, enabled, journal);
+  } catch (e) {
+    if (e instanceof Beds24Error) throw new PriceLinkingError(`${e.message} (lecture de l'état Beds24, rien n'a été envoyé)`, e.status, "refus", e.response, journal);
+    throw e;
+  }
+  const envois = planned.plans.map((p) => p.body);
+  if (opts.essai) return { properties: planned.plans.length, rooms: planned.rooms, journal, envois };
+  const touched: LinkingPlan[] = [];
+  for (const p of planned.plans) {
     try {
-      await beds24Fetch(env, "/properties", { method: "POST", body: priceLinkingBody(l.beds24PropertyId, l.roomIds, lines, enabled) });
-      done.push(l);
+      const reponse = await beds24Fetch(env, "/properties", { method: "POST", body: p.body });
+      journal.push({ beds24PropertyId: p.beds24PropertyId, etape: "envoi", envoi: p.body, reponse: rawForAudit(reponse) });
+      touched.push(p);
     } catch (e) {
-      // La propriété en échec « inconnu » a pu être modifiée : elle est
-      // compensée aussi. Chaque propriété touchée revient à l'état d'avant.
-      if (e instanceof Beds24Error && e.issue === "inconnu") done.push(l);
-      const undone: number[] = [];
-      for (const d of done) {
+      // Refus certain : rien n'a été appliqué ici, on n'y touche pas. Issue
+      // inconnue (réseau, 5xx, élément refusé à côté d'un `modified`) : la
+      // propriété a pu changer en partie, elle est remise aussi.
+      if (!(e instanceof Beds24Error) || e.issue === "inconnu") touched.push(p);
+      journal.push({ beds24PropertyId: p.beds24PropertyId, etape: "envoi", envoi: p.body, erreur: e instanceof Error ? e.message : String(e), ...(e instanceof Beds24Error ? { reponse: e.response } : {}) });
+      const failed: string[] = [];
+      for (const d of touched) {
         try {
-          await beds24Fetch(env, "/properties", { method: "POST", body: priceLinkingBody(d.beds24PropertyId, d.roomIds, prevLines, prev.enabled) });
-        } catch {
-          undone.push(d.beds24PropertyId);
+          await restoreProperty(env, d, journal);
+        } catch (re) {
+          failed.push(`#${d.beds24PropertyId} (${re instanceof Error ? re.message : String(re)})`);
         }
       }
-      if (undone.length && e instanceof Beds24Error) {
-        throw new Beds24Error(`${e.message} — et le retour arrière a échoué sur la propriété Beds24 ${undone.join(", ")} : prix par plateforme à vérifier dans Beds24`, e.status, "inconnu");
-      }
-      throw e;
+      if (!(e instanceof Beds24Error)) throw e;
+      const suite = failed.length
+        ? ` — et le retour arrière a échoué sur la propriété Beds24 ${failed.join(", ")} : relancer POST /api/admin/channels/price-linking {"enabled":false}, qui relit Beds24 et remet le prix direct partout`
+        : " — retour arrière fait : l'état lu avant l'envoi est remis";
+      throw new PriceLinkingError(`${e.message}${suite}`, e.status, failed.length ? "inconnu" : "refus", e.response, journal);
     }
   }
-  return { properties: linked.length, rooms: linked.reduce((n, l) => n + l.roomIds.length, 0) };
+  return { properties: planned.plans.length, rooms: planned.rooms, journal, envois };
+}
+
+/** État réel des lignes de prix chez Beds24, chambre par chambre (lecture seule). */
+async function liveLinkingState(env: Env) {
+  const { markups } = await markupContext(env.DB);
+  const lines = derivedLines(markups);
+  const journal: LinkingStep[] = [];
+  const out = [];
+  for (const l of await linkedRooms(env.DB)) {
+    try {
+      const live = await readLiveRules(env, l, journal);
+      out.push({ beds24PropertyId: l.beds24PropertyId, name: l.name, rooms: [...live].map(([roomId, rules]) => describeRoomRules(roomId, rules, lines)) });
+    } catch (e) {
+      out.push({ beds24PropertyId: l.beds24PropertyId, name: l.name, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return out;
 }
 
 export function registerLot3AdminRoutes(router: Router): void {
@@ -221,14 +345,33 @@ export function registerLot3AdminRoutes(router: Router): void {
     };
   }
 
-  router.get("/api/admin/channels/price-linking", guard(async (_req, env) => json(await linkingState(env))));
+  // `?beds24=1` : ajoute l'état RÉEL lu chez Beds24 (lignes de prix de chaque
+  // chambre, « direct », « derive » ou « partiel » à remettre). Lecture seule.
+  router.get("/api/admin/channels/price-linking", guard(async (_req, env, _p, url) => {
+    const state = await linkingState(env);
+    if (url.searchParams.get("beds24") !== "1") return json(state);
+    if (!(await beds24Configured(env))) return json({ ...state, live: null, liveError: "liaison Beds24 absente" });
+    return json({ ...state, live: await liveLinkingState(env) });
+  }));
 
+  // `{"enabled":true|false}` : envoie. `{"enabled":…, "essai":true}` : lit l'état
+  // Beds24 et rend ce qui partirait, sans rien écrire (diagnostic).
   router.post("/api/admin/channels/price-linking", guard(async (req, env, _p, _url, execCtx) => {
-    const body = await readJson<{ enabled?: unknown }>(req);
+    const body = await readJson<{ enabled?: unknown; essai?: unknown }>(req);
     if (typeof body?.enabled !== "boolean") return apiError(400, "enabled (vrai ou faux) attendu");
+    if (body.essai !== undefined && typeof body.essai !== "boolean") return apiError(400, "essai : vrai ou faux attendu (rien n'est parti)");
+    const essai = body.essai === true;
     const w = await writeState(env);
-    if (!w.writesAllowed) return apiError(409, `rien n'est parti : ${w.reason}`, { code: "beds24_writes_closed" });
+    if (essai ? !w.configured : !w.writesAllowed) return apiError(409, `rien n'est parti : ${w.reason}`, { code: "beds24_writes_closed" });
     if ((await linkedRooms(env.DB)).length === 0) return apiError(409, "aucune annonce Beds24 reliée", { code: "beds24_not_linked" });
+    if (essai) {
+      try {
+        const r = await sendPriceLinking(env, body.enabled, { essai: true });
+        return json({ essai: true, enabled: body.enabled, properties: r.properties, rooms: r.rooms, envois: r.envois, live: await liveLinkingState(env) });
+      } catch (e) {
+        return beds24Failure(e, e instanceof PriceLinkingError ? { journal: e.journal } : undefined);
+      }
+    }
     const { markups } = await markupContext(env.DB);
     let sent;
     try {
@@ -236,8 +379,9 @@ export function registerLot3AdminRoutes(router: Router): void {
       // envoyé sans la ligne qui le majore chez la plateforme.
       sent = await sendPriceLinking(env, body.enabled);
     } catch (e) {
-      await audit(env.DB, "admin", "beds24.price_linking_failed", "app", { enabled: body.enabled, error: e instanceof Error ? e.message : String(e), par: currentUser(req) });
-      return beds24Failure(e);
+      const journal = e instanceof PriceLinkingError ? e.journal : undefined;
+      await audit(env.DB, "admin", "beds24.price_linking_failed", "app", { enabled: body.enabled, error: e instanceof Error ? e.message : String(e), journal, par: currentUser(req) });
+      return beds24Failure(e, journal ? { journal } : undefined);
     }
     const lines = derivedLines(markups);
     await setSetting(env.DB, PRICE_LINKING_KEY, JSON.stringify({
@@ -245,7 +389,7 @@ export function registerLot3AdminRoutes(router: Router): void {
       sentMarkups: body.enabled ? Object.fromEntries(lines.map((l) => [l.channel, l.markupPct])) : null,
       sentAt: new Date().toISOString(),
     }));
-    await audit(env.DB, "admin", "beds24.price_linking", "app", { enabled: body.enabled, ...sent, lines: lines.map((l) => `${l.beds24Channel}×${l.multiplier}`), par: currentUser(req) });
+    await audit(env.DB, "admin", "beds24.price_linking", "app", { enabled: body.enabled, properties: sent.properties, rooms: sent.rooms, lines: lines.map((l) => `${l.beds24Channel}×${l.multiplier}`), journal: sent.journal, par: currentUser(req) });
     // Le prix du calendrier change (direct ↔ majoré) : renvoi immédiat.
     await triggerBeds24PushAll(env.DB, env, execCtx);
     return json(await linkingState(env));

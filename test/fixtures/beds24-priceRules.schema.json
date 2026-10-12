@@ -1,0 +1,580 @@
+{
+ "source": "https://api.beds24.com/v2/apiV2.yaml, components.schemas.priceRules",
+ "schema": {
+  "type": "object",
+  "properties": {
+   "id": {
+    "type": "integer",
+    "minimum": 1,
+    "maximum": 16
+   },
+   "name": {
+    "type": "string",
+    "maxLength": 20
+   },
+   "priceFor": {
+    "type": "object",
+    "properties": {
+     "type": {
+      "type": "string",
+      "enum": [
+       "perPerson",
+       "maxCapacity",
+       "upToPerson"
+      ],
+      "example": "upToPerson"
+     },
+     "upToPersonValue": {
+      "description": "Used to specifty the maximum occupancy if the priceType is set to upToPerson",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 99,
+      "example": 5,
+      "nullable": true
+     }
+    }
+   },
+   "extraPerson": {
+    "type": "number",
+    "format": "double",
+    "minimum": 0
+   },
+   "extraChild": {
+    "type": "number",
+    "format": "double",
+    "minimum": 0
+   },
+   "minimumStay": {
+    "type": "integer",
+    "minimum": 1,
+    "maximum": 30
+   },
+   "maximumStay": {
+    "type": "integer",
+    "minimum": 1,
+    "maximum": 365
+   },
+   "offer": {
+    "type": "integer",
+    "minimum": 1,
+    "maximum": 16
+   },
+   "minDaysUntilCheckin": {
+    "type": "integer",
+    "minimum": 0,
+    "maximum": 999
+   },
+   "maxDaysUntilCheckin": {
+    "type": "integer",
+    "minimum": 0,
+    "maximum": 999
+   },
+   "color": {
+    "type": "string"
+   },
+   "priceLinking": {
+    "description": "Used to link this price to another price",
+    "type": "object",
+    "properties": {
+     "roomId": {
+      "type": "integer",
+      "nullable": true
+     },
+     "priceId": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16,
+      "nullable": true,
+      "description": "Set to null to disable the link"
+     },
+     "offsetMultiplier": {
+      "type": "number",
+      "default": 1,
+      "nullable": true,
+      "minimum": 0.1,
+      "maximum": 9.99
+     },
+     "offsetAmount": {
+      "type": "number",
+      "nullable": true
+     }
+    }
+   },
+   "agentCodes": {
+    "type": "array",
+    "items": {
+     "type": "string"
+    }
+   },
+   "bookingPage": {
+    "type": "object",
+    "properties": {
+     "direct": {
+      "type": "boolean"
+     },
+     "agent": {
+      "type": "boolean"
+     }
+    }
+   },
+   "channels": {
+    "type": "object",
+    "properties": {
+     "agoda": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "airbnb": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "atraveode": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "bedandbreakfasteu": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "bedandbreakfastnl": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "bookeasycomau": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "booking": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "bookitconz": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "trip": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "despegar": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "edreamsodigeo": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "expedia": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "feratel": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "flipkey": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "goibibo": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "guestlinkcouk": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "hometogo": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "hostelinternational": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "hostelsclub": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "hostelworld": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "hotelbeds": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "hrs": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string",
+        "enum": [
+         "standardDoubleHRS1",
+         "standardDoubleTrade1",
+         "standardDoubleSpecial1",
+         "standardDoubleWeekend1",
+         "standardDoubleHotdeal1",
+         "standardDoubleTrade2",
+         "standardDoubleSpecial2",
+         "standardDoubleHotdeal2",
+         "standardDoubleTrade3",
+         "standardDoubleSpecial3",
+         "standardDoubleHotdeal3",
+         "standardSingleHRS1",
+         "standardSingleTrade1",
+         "standardSingleSpecial1",
+         "standardSingleWeekend1",
+         "standardSingleHotdeal1",
+         "standardSingleTrade2",
+         "standardSingleSpecial2",
+         "standardSingleHotdeal2",
+         "standardSingleTrade3",
+         "standardSingleSpecial3",
+         "standardSingleHotdeal3",
+         "3BedRoom",
+         "4BedRoom",
+         "doubleApartment",
+         "doubleBalcony",
+         "doubleBudget",
+         "doubleBusiness",
+         "doubleComfort",
+         "doubleFamily",
+         "doubleJuniorSuite",
+         "doubleLakeView",
+         "doubleSeaView",
+         "doubleMountainView",
+         "doublePoolView",
+         "doubleRiverView",
+         "doubleSuite",
+         "doubleTerrace",
+         "singleApartment",
+         "singleBalcony",
+         "singleBudget",
+         "singleBusiness",
+         "singleComfort",
+         "singleFamily",
+         "singleJuniorSuite",
+         "singleLakeView",
+         "singleSeaView",
+         "singleMountainView",
+         "singlePoolView",
+         "singleRiverView",
+         "singleSuite",
+         "singleTerrace"
+        ]
+       }
+      }
+     },
+     "jomres": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "lastminute": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "marriott": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "ostrovokru": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "ota": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "reserva": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "tablethotels": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "tiket": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "tomastravel": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "traumferienwohnungen": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "traveloka": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "travia": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       },
+       "rateCode": {
+        "type": "string"
+       }
+      }
+     },
+     "tripadvisorrentals": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "vacationstay": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "vrbo": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     },
+     "webroomsconz": {
+      "type": "object",
+      "properties": {
+       "enabled": {
+        "type": "boolean"
+       }
+      }
+     }
+    }
+   },
+   "upsellItems": {
+    "type": "array",
+    "items": {
+     "type": "object",
+     "properties": {
+      "index": {
+       "type": "integer"
+      },
+      "enable": {
+       "description": "Whether the upsell item is allowed for this price rule",
+       "type": "boolean"
+      }
+     }
+    }
+   },
+   "voucherCodes": {
+    "type": "array",
+    "items": {
+     "type": "object",
+     "properties": {
+      "index": {
+       "type": "integer"
+      },
+      "enabled": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  }
+ }
+}

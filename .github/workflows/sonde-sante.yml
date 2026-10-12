@@ -18,6 +18,10 @@
 
 name: Sonde de santé
 
+env:
+  # Production : serveur Hetzner (adresse provisoire, depuis le 11/10/2026).
+  URL_PROD: https://178-105-145-191.sslip.io
+
 on:
   schedule:
     # Toutes les 30 minutes. Le traitement planifié passe toutes les 15 minutes :
@@ -40,9 +44,7 @@ jobs:
     steps:
       - name: Interroger le contrôle de santé
         env:
-          # La production est le site Node chez Infomaniak depuis le 10/10/2026
-          # (décision de Julien) ; le Mac la sonde aussi (scripts/gites_sonde.py, Telegram).
-          URL: https://dev1.mdcdy.be/api/public/health
+          URL: ${{ env.URL_PROD }}/api/public/health
           # Le cron tourne toutes les 15 min : 45 min = trois passages manqués.
           # Assez large pour absorber un retard de planification côté Cloudflare,
           # assez court pour ne pas découvrir la panne le lendemain.

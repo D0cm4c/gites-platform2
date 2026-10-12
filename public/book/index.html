@@ -78,13 +78,16 @@
     <!-- Une question avant de réserver ? (message direct dans la plateforme) -->
     <details class="card qcard" id="contactCard">
       <summary data-i18n>Une question avant de réserver ?</summary>
+      <p class="contact-where" id="cWhere"></p>
       <div class="row" style="margin-top:12px">
-        <div><label class="f" data-i18n>Nom</label><input id="cName"></div>
-        <div><label class="f" data-i18n>Email</label><input id="cEmail" type="email"></div>
+        <div><label class="f" for="cName" data-i18n>Nom</label><input id="cName" autocomplete="name"></div>
+        <div><label class="f" for="cEmail" data-i18n>Email</label><input id="cEmail" type="email" inputmode="email" autocomplete="email"></div>
       </div>
-      <div style="margin-top:10px"><label class="f" data-i18n>Message</label><textarea id="cMsg" rows="3" placeholder="Disponibilités, équipements, accès…" data-i18n-attr="placeholder"></textarea></div>
+      <div style="margin-top:10px"><label class="f" for="cMsg" data-i18n>Message</label><textarea id="cMsg" rows="3" placeholder="Disponibilités, équipements, accès…" data-i18n-attr="placeholder"></textarea></div>
       <input id="cWebsite" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
-      <p style="margin-top:10px"><button class="btn o" id="cSend" data-i18n>Envoyer la question</button> <span id="cNote" class="small muted"></span></p>
+      <p style="margin-top:10px"><button class="btn o" id="cSend" data-i18n>Envoyer la question</button></p>
+      <p id="cNote" class="small" role="alert"></p>
+      <div id="cOk" class="contact-ok" role="status" hidden></div>
     </details>
   </div>
 

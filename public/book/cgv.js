@@ -18,7 +18,7 @@ export function cgvHtml(text) {
     .filter(Boolean)
     .map((block) => {
       const html = esc(block).replace(/\n/g, "<br>");
-      return /^(Article \d+|CONDITIONS GÉNÉRALES)/.test(block)
+      return /^(Article \d+|CONDITIONS GÉNÉRALES|Comment ça se passe$)/.test(block)
         ? `<p class="cgv-h"><b>${html}</b></p>`
         : `<p>${html}</p>`;
     })

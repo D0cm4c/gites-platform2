@@ -20,7 +20,7 @@
 import { cgvHtml } from "./cgv.js";
 import { icsFile } from "./ics.js";
 import { mountPayment, paymentConfig } from "./pay-element.js";
-import { apiHeaders, CGV_NOTE_NL, eur, LANG, mountLangSwitch, pl, t, translateStatic } from "./i18n.js";
+import { apiHeaders, CGV_NOTE_NL, eur, hour, LANG, mountLangSwitch, pl, t, translateStatic } from "./i18n.js";
 translateStatic();
 mountLangSwitch(document.getElementById("langSwitch"));
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -89,11 +89,14 @@ const lineLabel = (l) => (l?.publicLabel && l.unitPriceCents != null
   // paiement disparaît : reproposer « Payer » ici, c'est inviter au double
   // débit (contre-review Gemini 2026-08-30). Le serveur refuse d'ailleurs en
   // 409, mais l'utilisateur ne doit pas avoir à découvrir l'erreur.
+  // Option ouverte par le back-office : les CGV ne sont pas encore acceptées.
+  const needCgv = b.status === "pending" && data.cgvAccepted === false;
   const payBlock = redirectStatus === "processing" ? "" : holdAlive
     ? `<div class="card" id="payCard"><h3>${t("Finaliser la réservation")}</h3>
         <p class="small muted">${t("Votre créneau vous est bloqué encore {duree} — terminez le paiement pour confirmer.", { duree: `<b id="holdLeft">${holdLabel(holdMsLeft)}</b>` })}</p>
+        ${needCgv ? `<div class="agree"><label class="small"><input type="checkbox" id="vCgv"> ${t('J\'accepte les <a href="#" id="cgvLink">conditions générales</a> *')}</label></div>` : ""}
         <div id="payMsg"></div>
-        <button class="btn big" id="payNow" style="margin-top:8px">💳 ${t("Finaliser le paiement sécurisé")}</button></div>`
+        <button class="btn big" id="payNow" style="margin-top:8px"${needCgv ? " disabled" : ""}>💳 ${t("Finaliser le paiement sécurisé")}</button></div>`
     : b.status === "pending"
     ? `<div class="card" id="payCard">${expiredHtml}</div>`
     : b.status === "confirmed" && b.balanceCents > 0
@@ -129,8 +132,8 @@ const lineLabel = (l) => (l?.publicLabel && l.unitPriceCents != null
       <table class="quote">
         <tr><td>${t("Référence")}</td><td class="r"><b class="mono">${esc(b.reference)}</b> ${statusTag}</td></tr>
         <tr><td>${t("Hébergement")}</td><td class="r"><b>${esc(b.unitName)}</b></td></tr>
-        <tr><td>${t("Arrivée")}</td><td class="r">${t("{date} dès {heure}", { date: dfr(b.checkin), heure: esc(data.stay.checkinTime) })}</td></tr>
-        <tr><td>${t("Départ")}</td><td class="r">${t("{date} avant {heure}", { date: dfr(b.checkout), heure: esc(data.stay.checkoutTime) })}</td></tr>
+        <tr><td>${t("Arrivée")}</td><td class="r">${t("{date} dès {heure}", { date: dfr(b.checkin), heure: esc(hour(data.stay.checkinTime)) })}</td></tr>
+        <tr><td>${t("Départ")}</td><td class="r">${t("{date} avant {heure}", { date: dfr(b.checkout), heure: esc(hour(data.stay.checkoutTime)) })}</td></tr>
         <tr><td>${t("Voyageurs")}</td><td class="r">${pl(b.adults, "adulte", "adultes")}${b.children ? ` + ${pl(b.children, "enfant", "enfants")}` : ""}</td></tr>
       </table>
     </div>
@@ -154,10 +157,10 @@ const lineLabel = (l) => (l?.publicLabel && l.unitPriceCents != null
     <div class="card"><h3>💬 ${t("Échanges avec l'équipe")}</h3>
       <p class="small muted">${b.status !== "cancelled" ? t("Une question sur votre séjour ? Écrivez-nous ici — la réponse apparaîtra sur cette page (et par email).") : t("Une question sur votre séjour ? Écrivez-nous ici — la réponse apparaîtra sur cette page.")}</p>
       <div class="thread" id="thread"><span class="muted small">${t("Chargement…")}</span></div>
-      <textarea id="msgText" rows="3" placeholder="${t("Votre message…")}"></textarea>
-      <p style="margin-top:8px"><button class="btn" id="msgSend">${t("Envoyer")}</button> <span id="msgNote" class="small muted"></span></p>
+      <label class="f sr-only" for="msgText">${t("Votre message…")}</label><textarea id="msgText" rows="3" placeholder="${t("Votre message…")}"></textarea>
+      <p style="margin-top:8px"><button class="btn" id="msgSend">${t("Envoyer")}</button> <span id="msgNote" class="small muted" role="status"></span></p>
     </div>
-    <div class="card"><h3>${t("Conditions générales &amp; contrat de location")}</h3>
+    <div class="card" id="cgvCard"><h3>${t("Conditions générales")}</h3>
       <div class="cgv-box">${data.cgvText?.trim() ? (LANG === "nl" ? `<p class="cgv-h"><b>${CGV_NOTE_NL}</b></p>` : "") + cgvHtml(data.cgvText) + (b.depositPct != null ? `<p class="cgv-h"><b>${t("Pour {nom}, le pourcentage d'arrhes de l'article 4.1 est de {pct} %.", { nom: esc(b.unitName), pct: b.depositPct })}</b></p>` : "") : `<p>${t("Conditions générales à venir.")}</p>`}</div></div>
     <p class="footer-note"><a href="javascript:print()">${t("Imprimer / enregistrer en PDF")}</a></p>`;
 
@@ -213,13 +216,17 @@ const lineLabel = (l) => (l?.publicLabel && l.unitPriceCents != null
   }
 
   const payBtn = document.getElementById("payNow");
+  const vCgv = document.getElementById("vCgv");
+  if (vCgv && payBtn) vCgv.onchange = () => { payBtn.disabled = !vCgv.checked; };
+  const cgvLink = document.getElementById("cgvLink");
+  if (cgvLink) cgvLink.onclick = (e) => { e.preventDefault(); document.getElementById("cgvCard")?.scrollIntoView({ behavior: "smooth" }); };
   if (payBtn) {
     payBtn.onclick = async () => {
       payBtn.disabled = true;
       payBtn.textContent = t("Préparation du paiement…");
       const r = await fetch(`/api/public/bookings/${encodeURIComponent(ref)}/pay`, {
         method: "POST", headers: apiHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, ...(vCgv ? { cgvAccepted: vCgv.checked } : {}) }),
       });
       const d = await r.json();
       // Paiement intégré (issue #26) : le formulaire remplace le bouton, dans
@@ -227,10 +234,12 @@ const lineLabel = (l) => (l?.publicLabel && l.unitPriceCents != null
       // l'afficher.
       if (r.ok && d.payment?.mode === "element" && d.payment.clientSecret) {
         try {
-          const cfg = await paymentConfig();
-          if (!cfg.enabled || !cfg.publishableKey) throw new Error(t("paiement indisponible"));
+          // Clé publiable du compte Stripe de la propriété, fournie avec le paiement ;
+          // /payment-config reste le repli d'un serveur plus ancien.
+          const publishableKey = d.payment.publishableKey || (await paymentConfig()).publishableKey;
+          if (!publishableKey) throw new Error(t("paiement indisponible"));
           await mountPayment(document.getElementById("payCard"), {
-            publishableKey: cfg.publishableKey,
+            publishableKey,
             clientSecret: d.payment.clientSecret,
             returnUrl: d.payment.returnUrl,
             amountLabel: eur(d.amountCents),
@@ -282,7 +291,9 @@ const lineLabel = (l) => (l?.publicLabel && l.unitPriceCents != null
     btn.disabled = false;
     if (res.ok) {
       document.getElementById("msgText").value = "";
-      document.getElementById("msgNote").textContent = t("Message envoyé — nous vous répondons vite.");
+      document.getElementById("msgNote").textContent = data2.ackSent
+        ? t("Message envoyé à l'équipe. Un e-mail de confirmation vous est envoyé à l'instant (objet : [{ref}]) ; la réponse arrive sur cette page et par e-mail.", { ref: b.reference })
+        : t("Message envoyé à l'équipe — la réponse arrive sur cette page et par e-mail.");
       renderThread(data2.messages || []);
     } else {
       document.getElementById("msgNote").textContent = data2.error || t("envoi impossible");

@@ -66,7 +66,7 @@ async function call(
   return { status: res.status, data: (await res.json()) as Record<string, unknown> };
 }
 
-describe("CGV v3 injectées en base (migration 0019)", () => {
+describe("CGV injectées en base (0019, puis 0036 pour la v3.1)", () => {
   it("les deux domaines servent le texte définitif, sans placeholder", async () => {
     for (const slug of ["pre-more", "moulin-braives"]) {
       const res = await call("GET", `/api/public/properties/${slug}`);

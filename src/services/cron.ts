@@ -4,6 +4,7 @@
 //  3. rappels de solde à l'échéance (une seule fois par résa, mode stub par défaut)
 //  4. push Beds24 des calendriers mappés (dispo + prix — inactif sans token),
 //     puis relève des messages des canaux (services/beds24-messages.ts)
+//     et de la boîte de contact des gîtes (services/mailbox.ts, IMAP, Node seulement)
 //
 // Plus trois ménages : sessions admin périmées, sessions de paiement restées
 // « en attente » au-delà de leur durée de vie (issue #69), et purge du
@@ -24,6 +25,7 @@ import {
 import { beds24Configured } from "./beds24";
 import { purgeExpiredSessions } from "./admin-auth";
 import { pullChannelMessages } from "./beds24-messages";
+import { pullMailbox } from "./mailbox";
 import { pullBeds24Bookings, pushCalendars } from "./beds24-sync";
 import { runDailyDigest } from "./digest";
 import { runGuestRegisterPurge } from "./guest-register";
@@ -167,6 +169,15 @@ export async function runScheduled(env: Env, now: Date = new Date(), fetcher: ty
     } catch {
       /* beds24.messages.error au journal */
     }
+  }
+
+  // 4 bis (messagerie). Boîte de contact des gîtes (IMAP) : les mails reviennent dans
+  //    Messages avec leur origine. Sans IMAP_USER, ou sur Workers (pas de socket), la
+  //    relève se saute d'elle-même ; elle ne lève jamais (échec = journal + état).
+  try {
+    await pullMailbox(env, now);
+  } catch (e) {
+    await audit(db, "cron", "mailbox.imap.error", undefined, { error: e instanceof Error ? e.message : String(e) });
   }
 
   // 4 bis. Rapatriement COMPLET des canaux externes, une fois par jour au tick

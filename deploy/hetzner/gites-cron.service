@@ -1,0 +1,15 @@
+# Rôle : un passage du traitement planifié (rappels, synchro Beds24, relève des messages).
+# Usage : lancé par gites-cron.timer ; clé CRON_KEY lue dans /srv/gites/.env par systemd.
+[Unit]
+Description=Traitement planifié des gîtes (appel /internal/cron)
+After=gites.service
+Wants=gites.service
+
+[Service]
+Type=oneshot
+User=gites
+Group=gites
+EnvironmentFile=/srv/gites/.env
+# ${CRON_KEY} est substituée par systemd ; la clé n'est jamais écrite dans ce fichier.
+ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 600 "http://127.0.0.1:8787/internal/cron?key=${CRON_KEY}"
+TimeoutStartSec=15min

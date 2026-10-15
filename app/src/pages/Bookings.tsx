@@ -12,7 +12,7 @@ import type { Booking } from "../api/types";
 import { bookingState } from "../booking/BookingPanel";
 import { ErrorLine } from "../lib/action";
 import { stayPhase, type StayPhase } from "../../../src/core/stay-phase";
-import { stayRange, todayBrussels } from "../lib/dates";
+import { shortDate, stayRange, todayBrussels } from "../lib/dates";
 import { channelName } from "../lib/derive";
 import { eur } from "../lib/money";
 import { useScope } from "../lib/scope";
@@ -21,12 +21,12 @@ import { useOpenBooking } from "../shell/Shell";
 import { DownloadButton } from "../ui/kit";
 
 type Period = "upcoming" | "current" | "past" | "";
-type SortKey = "name" | "checkin" | "amount";
+type SortKey = "name" | "checkin" | "submitted" | "amount";
 type Sort = { k: SortKey; dir: 1 | -1 } | null;
 
 function sortRows(list: Booking[], sort: Sort): Booking[] {
   if (!sort) return list;
-  const key = (b: Booking): string | number => (sort.k === "name" ? (b.guestName || "").toLocaleLowerCase("fr") : sort.k === "checkin" ? b.checkin : b.totalCents);
+  const key = (b: Booking): string | number => (sort.k === "name" ? (b.guestName || "").toLocaleLowerCase("fr") : sort.k === "checkin" ? b.checkin : sort.k === "submitted" ? b.createdAt : b.totalCents);
   return [...list].sort((a, b) => {
     const x = key(a);
     const y = key(b);
@@ -35,10 +35,10 @@ function sortRows(list: Booking[], sort: Sort): Booking[] {
 }
 
 /** En-tête triable : un clic trie, un second inverse ; aria-sort dit l'état. */
-function SortTh({ k, sort, onSort, right, children }: { k: SortKey; sort: Sort; onSort: (s: Sort) => void; right?: boolean; children: ReactNode }) {
+function SortTh({ k, sort, onSort, right, className, children }: { k: SortKey; sort: Sort; onSort: (s: Sort) => void; right?: boolean; className?: string; children: ReactNode }) {
   const on = sort?.k === k;
   return (
-    <th scope="col" className={right ? "r" : undefined} aria-sort={on ? (sort.dir === 1 ? "ascending" : "descending") : undefined}>
+    <th scope="col" className={[right ? "r" : null, className].filter(Boolean).join(" ") || undefined} aria-sort={on ? (sort.dir === 1 ? "ascending" : "descending") : undefined}>
       <button type="button" className="th-sort" onClick={() => onSort(on && sort.dir === 1 ? { k, dir: -1 } : { k, dir: 1 })}>
         {children}
         {on ? sort.dir === 1 ? <IconArrowUp size={16} aria-hidden /> : <IconArrowDown size={16} aria-hidden /> : <IconArrowsSort size={16} aria-hidden className="muted" />}
@@ -144,13 +144,14 @@ export function BookingsPage() {
       {rows.length > 0 ? (
         <div className="tbl-wrap">
           <table className="tbl dense bk mcards">
-            <caption className="sr">{t`Réservations, ${rows.length} lignes. Les en-têtes Client, Séjour et Total trient la liste.`}</caption>
+            <caption className="sr">{t`Réservations, ${rows.length} lignes. Les en-têtes Client, Séjour, Soumise le et Total trient la liste.`}</caption>
             <thead>
               <tr>
                 <th scope="col">{t`Réf.`}</th>
                 <SortTh k="name" sort={sort} onSort={setSort}>{t`Client`}</SortTh>
                 <th scope="col" className="hide-s">{t`Bien`}</th>
                 <SortTh k="checkin" sort={sort} onSort={setSort}>{t`Séjour`}</SortTh>
+                <SortTh k="submitted" sort={sort} onSort={setSort} className="hide-s">{t`Soumise le`}</SortTh>
                 <SortTh k="amount" sort={sort} onSort={setSort} right>{t`Total`}</SortTh>
                 <th scope="col" className="r hide-s">{t`Payé`}</th>
                 <th scope="col" className="hide-s">{t`État`}</th>
@@ -183,6 +184,10 @@ export function BookingsPage() {
                       {st === "solde" ? <small>{t`reste ${eur(balance)}`}</small> : null}
                     </td>
                     <td className="r hide-s mc-off">{b.paidCents ? eur(b.paidCents) : "—"}</td>
+                    <td className="hide-s muted">
+                      {shortDate(b.createdAt.slice(0, 10))}
+                      <small className="show-s-inline">{sourceLabel(b)}</small>
+                    </td>
                     <td className="hide-s">
                       <span className={`pill ${st}`}>{pill[st]}</span>
                     </td>

@@ -6520,8 +6520,8 @@ msgstr "Réservations venues des plateformes"
 
 #. placeholder {0}: rows.length
 #: src/pages/Bookings.tsx
-msgid "Réservations, {0} lignes. Les en-têtes Client, Séjour et Total trient la liste."
-msgstr "Réservations, {0} lignes. Les en-têtes Client, Séjour et Total trient la liste."
+msgid "Réservations, {0} lignes. Les en-têtes Client, Séjour, Soumise le et Total trient la liste."
+msgstr "Réservations, {0} lignes. Les en-têtes Client, Séjour, Soumise le et Total trient la liste."
 
 #: src/booking/BookingPanel.tsx
 msgid "Réservé"
@@ -6970,6 +6970,10 @@ msgstr "Sombre"
 #: src/pages/settings/Help.tsx
 msgid "Sommaire"
 msgstr "Sommaire"
+
+#: src/pages/Bookings.tsx
+msgid "Soumise le"
+msgstr "Soumise le"
 
 #: src/pages/Bookings.tsx
 msgid "Source"

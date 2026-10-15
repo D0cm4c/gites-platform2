@@ -6524,8 +6524,8 @@ msgstr "Reserveringen van de platformen"
 
 #. placeholder {0}: rows.length
 #: src/pages/Bookings.tsx
-msgid "Réservations, {0} lignes. Les en-têtes Client, Séjour et Total trient la liste."
-msgstr "Boekingen, {0} rijen. De kolomkoppen Klant, Verblijf en Totaal sorteren de lijst."
+msgid "Réservations, {0} lignes. Les en-têtes Client, Séjour, Soumise le et Total trient la liste."
+msgstr "Boekingen, {0} rijen. De kolomkoppen Klant, Verblijf, Aangevraagd op en Totaal sorteren de lijst."
 
 #: src/booking/BookingPanel.tsx
 msgid "Réservé"
@@ -6974,6 +6974,10 @@ msgstr "Donker"
 #: src/pages/settings/Help.tsx
 msgid "Sommaire"
 msgstr "Inhoud"
+
+#: src/pages/Bookings.tsx
+msgid "Soumise le"
+msgstr "Aangevraagd op"
 
 #: src/pages/Bookings.tsx
 msgid "Source"

@@ -147,8 +147,8 @@ export function BookingsPage() {
             <caption className="sr">{t`Réservations, ${rows.length} lignes. Les en-têtes Client, Séjour et Total trient la liste.`}</caption>
             <thead>
               <tr>
-                <th scope="col">{t`Réf.`}</th>
                 <SortTh k="name" sort={sort} onSort={setSort}>{t`Client`}</SortTh>
+                <th scope="col">{t`Réf.`}</th>
                 <th scope="col" className="hide-s">{t`Bien`}</th>
                 <SortTh k="checkin" sort={sort} onSort={setSort}>{t`Séjour`}</SortTh>
                 <SortTh k="createdAt" sort={sort} onSort={setSort}>{t`Date de soumission`}</SortTh>
@@ -164,13 +164,13 @@ export function BookingsPage() {
                 const balance = b.totalCents - b.paidCents;
                 return (
                   <tr key={b.id} onClick={() => openBooking(b.id)}>
-                    <td className="ref">{b.reference}</td>
                     <td className="mc-t">
                       <button type="button" className="cell-link" onClick={(e) => (e.stopPropagation(), openBooking(b.id))}>
                         {b.guestName || channelName(b)}
                       </button>
                       <small className="show-s-inline">{b.unitName}</small>
                     </td>
+                    <td className="ref">{b.reference}</td>
                     <td className="hide-s mc-off">{b.unitName}</td>
                     <td>
                       {stayRange(b.checkin, b.checkout)}

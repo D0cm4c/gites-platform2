@@ -1265,6 +1265,8 @@ export interface PaymentRow {
   receivedAt: string | null;
   createdAt: string;
   bookingReference?: string;
+  /** Nom du client de la réservation rattachée (null si invité inconnu). */
+  bookingGuestName?: string | null;
 }
 
 function paymentOutcome(status: string, note: string | null): PaymentRow["outcome"] {
@@ -1283,11 +1285,12 @@ function mapPayment(r: Raw): PaymentRow {
     status: str(r.status), outcome: paymentOutcome(str(r.status), note),
     note, receivedAt: strOrNull(r.received_at), createdAt: str(r.created_at),
     bookingReference: strOrNull(r.booking_reference) ?? undefined,
+    bookingGuestName: strOrNull(r.booking_guest_name),
   };
 }
 
 export async function listPayments(db: D1Database, f: { bookingId?: number; propertyId?: number } = {}): Promise<PaymentRow[]> {
-  const base = "SELECT p.*, b.reference AS booking_reference FROM payments p JOIN bookings b ON b.id = p.booking_id JOIN units u ON u.id = b.unit_id";
+  const base = "SELECT p.*, b.reference AS booking_reference, CASE WHEN g.id IS NULL THEN NULL ELSE TRIM(COALESCE(g.first_name || ' ', '') || g.last_name) END AS booking_guest_name FROM payments p JOIN bookings b ON b.id = p.booking_id JOIN units u ON u.id = b.unit_id LEFT JOIN guests g ON g.id = b.guest_id";
   let stmt: D1PreparedStatement;
   if (f.bookingId) {
     stmt = db.prepare(`${base} WHERE p.booking_id = ?1 ORDER BY p.created_at DESC`).bind(f.bookingId);

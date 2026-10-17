@@ -202,7 +202,9 @@ function staticHeaders(file) {
   const headers = {
     "content-type": MIME[ext] || "application/octet-stream",
     "x-content-type-options": "nosniff",
-    "x-frame-options": "DENY",
+    // Le tunnel de réservation /book/ est la seule page intégrable en iframe
+    // (WordPress) ; partout ailleurs, l'intégration reste interdite.
+    ...(file.startsWith(join(PUBLIC_DIR, "book")) ? {} : { "x-frame-options": "DENY" }),
     "referrer-policy": "strict-origin-when-cross-origin",
   };
   if (file.startsWith(join(PUBLIC_DIR, "img"))) {

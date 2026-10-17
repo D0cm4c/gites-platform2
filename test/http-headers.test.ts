@@ -54,6 +54,12 @@ describe("en-têtes de sécurité", () => {
     expect(res.headers.get("content-security-policy")).toBeNull();
   });
 
+  it("autorise l'iframe UNIQUEMENT pour le tunnel de réservation /book/ (intégration WordPress)", async () => {
+    const book = await call("https://test.local/book/");
+    expect(book.headers.get("x-frame-options")).toBeNull();
+    const autre = await call("https://test.local/");
+    expect(autre.headers.get("x-frame-options")).toBe("DENY");
+  });
   it("ouvre Stripe — et Stripe seulement — pour le paiement intégré (issue #26)", async () => {
     const csp = (await call("https://test.local/book/")).headers.get("content-security-policy-report-only")!;
     // Le Payment Element a besoin d'exactement trois choses.

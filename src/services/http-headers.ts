@@ -100,7 +100,9 @@ export function withStandardHeaders(response: Response, url: URL): Response {
   const h = out.headers;
 
   h.set("x-content-type-options", "nosniff");
-  h.set("x-frame-options", "DENY");
+  // Le tunnel de réservation /book/ est la seule page intégrable en iframe
+  // (WordPress) ; partout ailleurs, l'intégration reste interdite.
+  if (!url.pathname.startsWith("/book/")) h.set("x-frame-options", "DENY");
   h.set("referrer-policy", "strict-origin-when-cross-origin");
   h.set("permissions-policy", PERMISSIONS_POLICY);
   h.set("content-security-policy-report-only", CSP_REPORT_ONLY);

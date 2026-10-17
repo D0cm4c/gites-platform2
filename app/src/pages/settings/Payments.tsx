@@ -60,6 +60,7 @@ export function PaymentsPage() {
             <caption className="sr">{t`Paiements`}</caption>
             <thead>
               <tr>
+                <th scope="col">{t`Client`}</th>
                 <th scope="col">{t`Date`}</th>
                 <th scope="col">{t`Réservation`}</th>
                 <th scope="col">{t`Type`}</th>
@@ -71,11 +72,13 @@ export function PaymentsPage() {
             <tbody>
               {rows.map((p) => (
                 <tr key={p.id} onClick={() => setOpen(p)}>
-                  <td className="nowrap mc-t">
+                  <td className="mc-t">
                     <button type="button" className="cell-link" onClick={(e) => (e.stopPropagation(), setOpen(p))}>
-                      {sqlWhen(p.receivedAt ?? p.createdAt)}
+                      {p.bookingGuestName || t`—`}
                     </button>
+                    <small className="show-s-inline">{sqlWhen(p.receivedAt ?? p.createdAt)}</small>
                   </td>
+                  <td className="nowrap" data-l={t`Date`}>{sqlWhen(p.receivedAt ?? p.createdAt)}</td>
                   <td className="ref" data-l={t`Réservation`}>{p.bookingReference}</td>
                   <td>{w.kind(p.kind)}</td>
                   <td className="hide-s" data-l={t`Moyen`}>{w.method(p.method)}</td>

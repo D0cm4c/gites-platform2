@@ -511,6 +511,32 @@ describe("calendriers et multi-biens (v2)", () => {
     expect(domaineDay.priceCents).toBe((scieurDay.priceCents ?? 0) + (scierieDay.priceCents ?? 0));
   });
 
+  it("calendrier public : jour de rotation marqué (départ le matin, arrivée possible)", async () => {
+    // Une réservation 23→25 : le 25 est LIBRE (la résa ne couvre pas sa nuit)
+    // mais c'est un jour de rotation — départ le matin, arrivée à 18 h.
+    // inA au 10 du mois (+90 jours arrondi au mois) : arrivée et jour de
+    // rotation restent dans le même mois, quel que soit le mois de départ.
+    const base = addDays(todayInZone(), 90);
+    const monthA = addDays(base, 30).slice(0, 7); // sûrement futur
+    const inA = `${monthA}-10`;
+    const outA = addDays(inA, 2);
+    await call("POST", "/api/admin/bookings", {
+      unitId: 2, checkin: inA, checkout: outA, adults: 4, guest: { lastName: "Rot" },
+    });
+    const month = inA.slice(0, 7);
+    const { status, data } = await call("GET", `/api/public/calendar?property=pre-more&month=${month}`);
+    expect(status).toBe(200);
+    const byId = new Map((data.units as { unitId: number; days: { date: string; available: boolean; turnover: boolean }[] }[]).map((u) => [u.unitId, u]));
+    // La Scierie : le jour de départ de la résa tourne, les autres non.
+    const scierie = byId.get(2)!.days;
+    expect(scierie.find((d) => d.date === outA)!.turnover).toBe(true);
+    expect(scierie.find((d) => d.date === outA)!.available).toBe(true);
+    expect(scierie.find((d) => d.date === addDays(outA, 1))!.turnover).toBe(false);
+    // Le Domaine entier tourne AUSSI ce jour-là (liaison) ; la Maison du Scieur non.
+    expect(byId.get(3)!.days.find((d) => d.date === outA)!.turnover).toBe(true);
+    expect(byId.get(1)!.days.find((d) => d.date === outA)!.turnover).toBe(false);
+  });
+
   it("rate-calendar admin : tarif jour par jour d'un bien", async () => {
     const to = addDays(CHECKIN, 3);
     const { status, data } = await call("GET", `/api/admin/rate-calendar?unit=2&from=${CHECKIN}&to=${to}`);

@@ -150,6 +150,19 @@ a{color:var(--accent)}
 /* Sur les jours de la plage, le prix est une information secondaire : on
    l'estompe pour que la période se lise d'abord, le prix reste sur place. */
 .pday.range .p{color:var(--muted)}
+/* Jour de rotation (« réservé à moitié ») : un départ le matin, une arrivée
+   possible à 18 h. Le matin est occupé, l'après-midi libre — la case le
+   dessine : moitié haute grisée, moitié basse libre. Ça ne se confond ni
+   avec « complet » (tout gris) ni avec un jour libre : la journée est
+   coupée en deux, comme la réalité. Le jour reste CLIQUABLE comme arrivée. */
+.pday.turnover{background:linear-gradient(180deg,#F1EFE9 0%,#F1EFE9 49%,#fff 51%,#fff 100%)}
+.pday.turnover .p{color:#8a7a45;font-weight:600}
+.pday.turnover:hover{border-color:var(--accent)}
+/* Sélectionné ou dans la plage : la mise en évidence du séjour prime sur la
+   marque de rotation — le client a déjà choisi, la période doit se lire. */
+.pday.turnover.sel{background:var(--accent)}
+.pday.turnover.sel .p{color:#fff}
+.pday.turnover.range{background:#E6EFE8}
 .pcal-rules{font-size:13.5px;color:var(--muted);margin:6px 0 0}
 .pcal-rules .rule{display:inline-block}
 /* Pictogrammes de la légende — mêmes couleurs que les liserés des cases. */

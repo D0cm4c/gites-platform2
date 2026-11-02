@@ -365,6 +365,9 @@ async function renderCalendar() {
       available: free.length > 0,
       minPrice: free.length ? Math.min(...free.map((d) => d.priceCents)) : null,
       minNights: free.length ? Math.min(...free.map((d) => d.minNights || 1)) : null,
+      // Jour de rotation : un départ ce matin, arrivée possible à 18 h. Agrégé
+      // en UNION comme la dispo — il suffit qu'un hébergement libre tourne.
+      turnover: free.some((d) => d.turnover),
       // null = au moins un hébergement libre n'impose aucun jour d'arrivée
       arrivalDays: free.length && restricted.length === free.length
         ? [...new Set(restricted.flatMap((d) => d.checkinDays))].sort((a, b) => a - b)
@@ -389,10 +392,13 @@ async function renderCalendar() {
     // repère les périodes contraignantes avant même de lire les règles
     // en bas de calendrier. Un jour libre sans minimum ne porte rien.
     const mnCls = !d.past && d.available && d.minNights > 1 ? ` mn${Math.min(d.minNights, 4)}` : "";
+    // Jour de rotation : marqué dans la classe, le prix laisse la place au
+    // mot-clé « rotation » dans la case — l'info prime sur le « dès X € ».
+    const turnCls = d.turnover && !d.past && d.available ? " turnover" : "";
     const cls = ["pday", d.past ? "past" : "", !d.past && !d.available ? "full" : "",
-      noArrival ? "noarr" : "", isSel ? "sel" : "", isOut ? "dep" : "", inRange ? "range" : ""].join(" ") + start + end + mnCls;
+      noArrival ? "noarr" : "", isSel ? "sel" : "", isOut ? "dep" : "", inRange ? "range" : ""].join(" ") + start + end + mnCls + turnCls;
     // Case du départ : ni prix ni minimum, ce n'est pas une nuit payée.
-    const sub = isOut ? t("départ") : d.past ? "" : d.available ? (d.minPrice != null ? t("dès {prix}", { prix: eurRound(d.minPrice) }) : "") : t("complet");
+    const sub = isOut ? t("départ") : d.past ? "" : d.available ? (d.turnover ? t("rotation 18 h") : d.minPrice != null ? t("dès {prix}", { prix: eurRound(d.minPrice) }) : "") : t("complet");
     // Le minimum de nuits est écrit DANS la case : c'est la seule façon de le
     // voir avant d'avoir choisi ses dates (impasse n° 5 du parcours au clic).
     const mn = !isOut && !d.past && d.available && d.minNights > 1 ? `<span class="mn">${t("min {n} n", { n: d.minNights })}</span>` : "";

@@ -124,6 +124,11 @@ a{color:var(--accent)}
 .pday.sel.dep .mn{display:none}
 .pday.noarr{background:repeating-linear-gradient(135deg,#fff,#fff 5px,#F5F2EA 5px,#F5F2EA 10px)}
 .pday.noarr.sel{background:var(--accent)}
+/* Un jour sans arrivée possible peut tomber DANS la période choisie (ex. le
+   samedi entre une arrivée vendredi et un départ dimanche) : il prend la mise
+   en évidence de la plage, comme les autres, pour que le séjour se lise d'un
+   coup d'œil. Sans cette règle, les hachures de noarr écrasent range. */
+.pday.noarr.range{background:#E6EFE8;border-color:#CBD8CD}
 .pcal-rules{font-size:13.5px;color:var(--muted);margin:6px 0 0}
 .pcal-rules .rule{display:inline-block}
 /* Plages réservables proposées quand les dates demandées ne passent pas. */

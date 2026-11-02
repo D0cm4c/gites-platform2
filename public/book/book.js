@@ -329,6 +329,12 @@ async function renderCalendar() {
   $("calLabel").textContent = label;
   $("calPrev").disabled = calMonth <= TODAY.slice(0, 7);
   $("calNext").disabled = calMonth >= monthShift(TODAY.slice(0, 7), 23);
+  // Bouton « Aujourd’hui » : caché tant qu’on est sur le mois courant, il
+  // n’a d’intérêt qu’après navigation (les déep-links peuvent atterrir loin).
+  if ($("calToday")) {
+    const away = calMonth !== TODAY.slice(0, 7);
+    $("calToday").hidden = !away;
+  }
 
   // agrégat par jour : dispo = au moins un hébergement libre ; prix = plancher
   // Minimum de nuits et jours d'arrivée sont agrégés de la même façon — au plus
@@ -374,9 +380,17 @@ async function renderCalendar() {
     const isSel = d.date === selIn || d.date === selOut;
     // Le jour du départ n'est pas une nuit payée : sa case se dessine à part.
     const isOut = selOut != null && d.date === selOut;
+    // Marqueurs de bout de plage : servent au CSS pour arrondir les coins
+    // externes et fondre les bordures internes — la période se lit continue.
+    const start = d.date === selIn ? " start" : "";
+    const end = d.date === selOut ? " end" : "";
     const noArrival = !d.past && d.available && d.arrivalDays != null && !d.arrivalDays.includes(dow(d.date));
+    // Le minimum de nuits se VOIT sur la case (mn2/mn3/mn4+) : le client
+    // repère les périodes contraignantes avant même de lire les règles
+    // en bas de calendrier. Un jour libre sans minimum ne porte rien.
+    const mnCls = !d.past && d.available && d.minNights > 1 ? ` mn${Math.min(d.minNights, 4)}` : "";
     const cls = ["pday", d.past ? "past" : "", !d.past && !d.available ? "full" : "",
-      noArrival ? "noarr" : "", isSel ? "sel" : "", isOut ? "dep" : "", inRange ? "range" : ""].join(" ");
+      noArrival ? "noarr" : "", isSel ? "sel" : "", isOut ? "dep" : "", inRange ? "range" : ""].join(" ") + start + end + mnCls;
     // Case du départ : ni prix ni minimum, ce n'est pas une nuit payée.
     const sub = isOut ? t("départ") : d.past ? "" : d.available ? (d.minPrice != null ? t("dès {prix}", { prix: eurRound(d.minPrice) }) : "") : t("complet");
     // Le minimum de nuits est écrit DANS la case : c'est la seule façon de le
@@ -397,6 +411,16 @@ async function renderCalendar() {
   $("calGrid").innerHTML = html;
   $("calGrid").querySelectorAll(".pday[data-date]").forEach((cell) => {
     cell.addEventListener("click", () => onDayClick(cell.dataset.date, cell));
+    // Prévisualisation au survol : arrivée choisie, départ pas encore — les
+    // jours entre l'arrivée et le curseur s'annoncent en clair. Rien quand la
+    // sélection est complète ou sur un jour non cliquable.
+    cell.addEventListener("mouseenter", () => {
+      if (!selIn || selOut || cell.classList.contains("past") || cell.classList.contains("full") || cell.dataset.date <= selIn) return;
+      $("calGrid").querySelectorAll(".pday[data-date]").forEach((c) => {
+        if (c.dataset.date > selIn && c.dataset.date <= cell.dataset.date) c.classList.add("hover-range");
+      });
+    });
+    cell.addEventListener("mouseleave", () => cell.classList.remove("hover-range"));
   });
   renderCalRules(days, data.minLeadDays);
 }
@@ -421,7 +445,14 @@ function renderCalRules(days, minLeadDays = 0) {
   // Délai minimum de réservation (demande n° 15) : les jours trop proches sont
   // grisés comme des jours passés — la règle doit être écrite, pas devinée.
   if (minLeadDays > 0) parts.push(t("Réservation en ligne au plus tard {jours} avant l'arrivée.", { jours: pl(minLeadDays, "jour", "jours") }));
-  zone.innerHTML = parts.map((x) => `<span class="rule">${esc(x)}</span>`).join(" ");
+  // Légende des minimums présents ce mois-ci : un pictogramme couleur par
+  // contrainte, qui ne montre QUE les minimums qui existent dans le mois
+  // affiché — pas de bruit sinon. Elle complète les phrases, pas l'inverse.
+  const mins = [...new Set(futurs.filter((d) => d.ruleMinNights > 1).map((d) => Math.min(d.ruleMinNights, 4)))].sort((a, b) => a - b);
+  const legend = mins.length
+    ? `<span class="rule">${mins.map((n) => `<span class="mn-chip mn${n}">${t("min. {n} n", { n: n === 4 ? "4+" : String(n) })}</span>`).join(" ")}</span>`
+    : "";
+  zone.innerHTML = legend + parts.map((x) => `<span class="rule">${esc(x)}</span>`).join(" ");
 }
 
 function onDayClick(date, cell) {
@@ -1569,6 +1600,8 @@ async function initFlow() {
   }
   $("calPrev").addEventListener("click", () => { calMonth = monthShift(calMonth, -1); renderCalendar(); });
   $("calNext").addEventListener("click", () => { calMonth = monthShift(calMonth, 1); renderCalendar(); });
+  // Retour au mois en cours, visible seulement quand on s'en est éloigné.
+  if ($("calToday")) $("calToday").addEventListener("click", () => { calMonth = TODAY.slice(0, 7); renderCalendar(); });
   $("qAd").addEventListener("change", onSelectionChange);
   $("qCh").addEventListener("change", onSelectionChange);
 

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maquette — Tunnel de réservation v2 (générique)</title>
+<!--
+  MAQUETTE — nouveau frontend « plateforme de réservation ».
+  Non thématisée Pré Moré : tout le look passe par les variables CSS de
+  [data-brand]. Deux marques de démonstration : "moulin" (Le Moulin de
+  Braives) et "premore" (Les Gîtes du Pré Moré). Aucune logique réelle :
+  dates, prix et disponibilités sont factices, le but est le parcours et
+  la mise en page. Le tunnel actuel (/book/) reste en production ; cette
+  maquette est l'ébauche du futur tunnel partagé par les deux domaines.
+-->
+<style>
+:root{
+  --radius:14px; --radius-s:9px;
+  --ink:#1c2b23; --muted:#6b7a72; --line:#e3e8e4; --surface:#fff; --bg:#f6f8f7;
+}
+[data-brand="moulin"]{ --accent:#0e6e66; --accent-ink:#fff; --accent-soft:#e2f1ef; --hero:#0d4f4a; }
+[data-brand="premore"]{ --accent:#7a5c2e; --accent-ink:#fff; --accent-soft:#f3ecdd; --hero:#5c451f; }
+
+*{box-sizing:border-box;margin:0}
+body{font-family:"Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink)}
+button{font:inherit;cursor:pointer}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+
+/* ---- barre de thème (démo seulement) ---- */
+.theme-bar{background:#111;color:#fff;font-size:13px;padding:8px 20px;display:flex;gap:10px;align-items:center;justify-content:center}
+.theme-bar button{background:none;border:1px solid #666;color:#fff;border-radius:999px;padding:3px 12px}
+.theme-bar button[aria-pressed="true"]{background:#fff;color:#111;border-color:#fff}
+
+/* ---- entête ---- */
+header{background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+.top{display:flex;align-items:center;justify-content:space-between;height:58px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;letter-spacing:.3px}
+.brand .logo{width:30px;height:30px;border-radius:8px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-size:15px}
+.lang{display:flex;gap:2px;border:1px solid var(--line);border-radius:999px;padding:2px}
+.lang button{border:0;background:none;border-radius:999px;padding:4px 12px;color:var(--muted)}
+.lang button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+
+/* ---- héros + recherche ---- */
+.hero{background:linear-gradient(160deg,var(--hero),var(--accent));color:#fff;padding:64px 0 88px;text-align:center}
+.hero h1{font-size:clamp(26px,4vw,40px);font-weight:800}
+.hero p{opacity:.85;margin:10px 0 30px;font-size:16px}
+.searchcard{background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 32px rgba(0,0,0,.18);padding:14px;display:grid;grid-template-columns:1fr 1fr auto;gap:10px;max-width:760px;margin:0 auto;text-align:left}
+.field{border:1px solid var(--line);border-radius:var(--radius-s);padding:10px 14px}
+.field label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:3px}
+.field b{font-size:15px;font-weight:600}
+.searchcard .go{background:var(--accent);color:var(--accent-ink);border:0;border-radius:var(--radius-s);padding:0 26px;font-weight:700;font-size:15px}
+
+/* ---- corps : dispo + hébergements ---- */
+main{display:grid;grid-template-columns:2fr 1fr;gap:24px;margin:36px auto 60px}
+h2{font-size:19px;margin-bottom:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+
+/* calendrier simplifié */
+.cal .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.grid .h{text-align:center;font-size:11px;color:var(--muted);padding:4px 0;text-transform:uppercase}
+.day{aspect-ratio:1/0.85;border:1px solid var(--line);border-radius:8px;background:var(--surface);display:flex;flex-direction:column;justify-content:center;font-size:14px;font-weight:600}
+.day small{font-size:10px;font-weight:500;color:var(--muted)}
+.day.off{background:#f1efe9;color:var(--muted);cursor:default}
+.day.hach{background:repeating-linear-gradient(135deg,#fff,#fff 5px,#F5F2EA 5px,#F5F2EA 10px)}
+.day.range{background:var(--accent-soft);border-color:var(--accent)}
+.day.hach.range{background:var(--accent-soft)}   /* la leçon du fix noarr.range */
+.day.sel{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.day.sel small{color:var(--accent-ink)}
+.cal-legend{display:flex;gap:16px;margin-top:12px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.cal-legend i{display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:-2px;margin-right:5px;border:1px solid var(--line)}
+
+/* hébergements */
+.units{margin-top:26px;display:grid;gap:14px}
+.unit{display:grid;grid-template-columns:120px 1fr auto;gap:14px;align-items:center;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--surface)}
+.unit .ph{height:100%;min-height:110px;background:linear-gradient(135deg,var(--accent-soft),var(--accent));opacity:.8}
+.unit h3{font-size:16px;margin-bottom:4px}
+.unit .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.unit .tags span{font-size:11.5px;background:var(--bg);border:1px solid var(--line);padding:2px 9px;border-radius:999px;color:var(--muted)}
+.unit .price{text-align:right;padding-right:14px}
+.unit .price b{font-size:17px;display:block}
+.unit .price small{color:var(--muted)}
+.unit button{background:var(--accent);color:var(--accent-ink);border:0;border-radius:var(--radius-s);padding:9px 18px;font-weight:600;margin-top:6px}
+.unit.unit-off{opacity:.55}
+.unit.unit-off button{background:#cfd6d2;color:#6b7a72;cursor:not-allowed}
+
+/* récap sticky */
+aside .card{position:sticky;top:76px}
+aside .row{display:flex;justify-content:space-between;padding:7px 0;font-size:14.5px}
+aside .row.total{border-top:1px solid var(--line);margin-top:8px;padding-top:12px;font-weight:700;font-size:16px}
+aside .cta{width:100%;background:var(--accent);color:var(--accent-ink);border:0;border-radius:var(--radius-s);padding:13px;font-weight:700;font-size:15px;margin-top:14px}
+aside .note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
+
+footer{border-top:1px solid var(--line);padding:22px 0;color:var(--muted);font-size:13px;text-align:center}
+
+@media (max-width:880px){
+  main{grid-template-columns:1fr}
+  aside .card{position:static}
+  .searchcard{grid-template-columns:1fr}
+  .unit{grid-template-columns:90px 1fr}
+  .unit .price{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;padding:0 14px 14px}
+}
+</style>
+</head>
+<body data-brand="moulin">
+
+<div class="theme-bar" role="group" aria-label="Démo : thème par domaine">
+  Thème de la maquette :
+  <button aria-pressed="true" onclick="setBrand('moulin')">Le Moulin de Braives</button>
+  <button aria-pressed="false" onclick="setBrand('premore')">Les Gîtes du Pré Moré</button>
+  <span style="opacity:.6">— même code, seules les variables CSS changent</span>
+</div>
+
+<header>
+  <div class="wrap top">
+    <div class="brand"><span class="logo" id="brandMark">M</span><span id="brandName">Le Moulin de Braives</span></div>
+    <nav class="lang" aria-label="Langue">
+      <button aria-pressed="true">FR</button>
+      <button aria-pressed="false">NL</button>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <h1>Réservez votre séjour en direct</h1>
+    <p>Disponibilités en temps réel · paiement sécurisé · sans intermédiaire</p>
+    <div class="searchcard">
+      <div class="field"><label>Arrivée</label><b>Ven 21 nov.</b></div>
+      <div class="field"><label>Voyageurs</label><b>2 adultes · 0 enfant</b></div>
+      <button class="go">Rechercher</button>
+    </div>
+  </div>
+</section>
+
+<main class="wrap">
+  <div>
+    <section class="card cal">
+      <div class="head">
+        <button aria-label="Mois précédent">‹</button>
+        <span>Novembre 2026</span>
+        <button aria-label="Mois suivant">›</button>
+      </div>
+      <div class="grid" id="calGrid">
+        <div class="h">L</div><div class="h">M</div><div class="h">M</div><div class="h">J</div><div class="h">V</div><div class="h">S</div><div class="h">D</div>
+      </div>
+      <div class="cal-legend">
+        <span><i style="background:var(--accent)"></i>sélection</span>
+        <span><i style="background:var(--accent-soft)"></i>dans votre séjour</span>
+        <span><i style="background:repeating-linear-gradient(135deg,#fff,#fff 3px,#F5F2EA 3px,#F5F2EA 6px)"></i>arrivée impossible</span>
+        <span><i style="background:#f1efe9"></i>complet</span>
+      </div>
+    </section>
+
+    <section class="units">
+      <h2 style="margin-top:28px">Hébergements disponibles · 2 nuits</h2>
+
+      <div class="unit">
+        <div class="ph"></div>
+        <div>
+          <h3>Le Moulin</h3>
+          <small style="color:var(--muted)">Tout le domaine · 12 personnes</small>
+          <div class="tags"><span>6 chambres</span><span>Cuisine équipée</span><span>Poêle</span><span>2 nuits min.</span></div>
+        </div>
+        <div class="price"><b>420 €</b><small>2 nuits · frais inclus</small><br><button>Réserver</button></div>
+      </div>
+
+      <div class="unit">
+        <div class="ph"></div>
+        <div>
+          <h3>La Meunerie</h3>
+          <small style="color:var(--muted)">Aile du moulin · 4 personnes</small>
+          <div class="tags"><span>2 chambres</span><span>Salon de lecture</span><span>Vu rivière</span></div>
+        </div>
+        <div class="price"><b>190 €</b><small>2 nuits · frais inclus</small><br><button>Réserver</button></div>
+      </div>
+
+      <div class="unit unit-off">
+        <div class="ph"></div>
+        <div>
+          <h3>Le Grand Salon</h3>
+          <small style="color:var(--muted)">8 personnes</small>
+          <div class="tags"><span>Complet ces dates</span></div>
+        </div>
+        <div class="price"><b>—</b><small>indisponible</small><br><button>Indisponible</button></div>
+      </div>
+    </section>
+  </div>
+
+  <aside>
+    <div class="card">
+      <h2 style="font-size:16px">Votre séjour</h2>
+      <div class="row"><span>Arrivée</span><b>ven. 21 nov.</b></div>
+      <div class="row"><span>Départ</span><b>dim. 23 nov.</b></div>
+      <div class="row"><span>Hébergement</span><b>Le Moulin</b></div>
+      <div class="row"><span>2 nuits × 190 €</span><span>380 €</span></div>
+      <div class="row"><span>Frais de gestion</span><span>12 €</span></div>
+      <div class="row"><span>Dont arrhes (30 %)</span><span>118 €</span></div>
+      <div class="row total"><span>Total</span><span>392 €</span></div>
+      <button class="cta">Continuer</button>
+      <p class="note">Créneau bloqué 30 minutes au moment du paiement. Annulation gratuite selon les conditions du domaine.</p>
+    </div>
+  </aside>
+</main>
+
+<footer>Maquette v2 — tunnel de réservation générique (une déclinaison par domaine) · non connectée au moteur réel</footer>
+
+<script>
+// Thème commutable : la maquette démontre qu'un seul code sert deux domaines.
+function setBrand(name){
+  document.body.dataset.brand = name;
+  const map = {
+    moulin: ["M","Le Moulin de Braives"],
+    premore: ["P","Les Gîtes du Pré Moré"],
+  };
+  document.getElementById("brandMark").textContent = map[name][0];
+  document.getElementById("brandName").textContent = map[name][1];
+  document.querySelectorAll(".theme-bar button").forEach(b=>{
+    b.setAttribute("aria-pressed", b.textContent.includes(map[name][1]) ? "true" : "false");
+  });
+}
+// Calendrier factice : 30 jours, arrivées ven/dim seulement (règle de démonstration).
+const grid = document.getElementById("calGrid");
+const days = [];
+for (let d = 1; d <= 30; d++) {
+  const dow = (d + 4) % 7;               // 1er nov 2026 = dimanche, décalage démo
+  days.push({ d, dow, full: [7, 8, 22].includes(d), hach: (dow === 1 || dow === 2 || dow === 3 || dow === 4) });
+}
+let selIn = null, selOut = null;
+function render(){
+  grid.querySelectorAll(".day").forEach(e => e.remove());
+  for (const day of days) {
+    const el = document.createElement("button");
+    el.className = "day";
+    el.type = "button";
+    let cls = "day";
+    if (day.full) cls += " off";
+    else if (day.hach) cls += " hach";
+    const inR = selIn && selOut && day.d > selIn && day.d < selOut;
+    const isSel = day.d === selIn || day.d === selOut;
+    if (inR) cls += " range";
+    if (isSel) cls += " sel";
+    el.className = cls;
+    el.innerHTML = day.d + (day.full ? "<small>complet</small>" : day.hach ? "<small>—</small>" : "");
+    el.onclick = () => {
+      if (day.full || day.hach) return;
+      if (!selIn || (selIn && selOut)) { selIn = day.d; selOut = null; }
+      else if (day.d <= selIn) { selIn = day.d; }
+      else { selOut = day.d; }
+      render();
+    };
+    grid.appendChild(el);
+  }
+}
+render();
+document.querySelectorAll(".lang button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".lang button").forEach(x => x.setAttribute("aria-pressed","false"));
+  b.setAttribute("aria-pressed","true");
+});
+</script>
+</body>
+</html>

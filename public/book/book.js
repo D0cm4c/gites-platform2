@@ -368,6 +368,11 @@ async function renderCalendar() {
       // Jour de rotation : un départ ce matin, arrivée possible à 18 h. Agrégé
       // en UNION comme la dispo — il suffit qu'un hébergement libre tourne.
       turnover: free.some((d) => d.turnover),
+      // Jour d'ARRIVÉE d'un séjour : une réservation DÉBUTE ce jour-là (la nuit
+      // est prise, le jour sort « complet »). Agrégé sur TOUTES les unités
+      // tarifées — pas seulement libres : c'est précisément sur les jours
+      // complets qu'il faut dire pourquoi.
+      arrivalDay: perUnit.some((d) => !d.past && d.arrivalDay),
       // null = au moins un hébergement libre n'impose aucun jour d'arrivée
       arrivalDays: free.length && restricted.length === free.length
         ? [...new Set(restricted.flatMap((d) => d.checkinDays))].sort((a, b) => a - b)
@@ -402,13 +407,18 @@ async function renderCalendar() {
     const cls = ["pday", d.past ? "past" : "", !d.past && !d.available ? "full" : "",
       noArrival ? "noarr" : "", isSel ? "sel" : "", isOut ? "dep" : "", inRange ? "range" : ""].join(" ") + start + end + mnCls + turnCls + arriveCls;
     // Case du départ : ni prix ni minimum, ce n'est pas une nuit payée.
-    const sub = isOut ? t("départ") : d.past ? "" : d.available ? (d.turnover ? t("→ 18 h") : d.minPrice != null ? t("dès {prix}", { prix: eurRound(d.minPrice) }) : "") : d.arrivalDay ? t("← 18 h") : t("complet");
+    // Les jours coupés gardent leur prix/description d'origine : la marque
+    // visuelle (case coupée en deux) suffit, pas de libellé flèché (retour de
+    // Julien du 03/11 : « pas utile sur un calendrier de réservation »).
+    const sub = isOut ? t("départ") : d.past ? "" : d.available ? (d.minPrice != null ? t("dès {prix}", { prix: eurRound(d.minPrice) }) : "") : t("complet");
     // Le minimum de nuits est écrit DANS la case : c'est la seule façon de le
     // voir avant d'avoir choisi ses dates (impasse n° 5 du parcours au clic).
     const mn = !isOut && !d.past && d.available && d.minNights > 1 ? `<span class="mn">${t("min {n} n", { n: d.minNights })}</span>` : "";
-    const hints = d.past || (!d.available && !d.arrivalDay) ? [] : [
-      d.turnover ? t("Départ le matin, arrivée possible le soir") : "",
-      !d.available && d.arrivalDay ? t("Arrivée d'un séjour ce soir — journée libre jusqu'à l'arrivée") : "",
+    // Pas de libellé « 18 h » ni de phrase au survol pour les jours coupés :
+    // la marque visuelle (case coupée en deux) suffit, l'heure n'apporte rien
+    // à la réservation (retour de Julien du 03/11). Le title ne garde que les
+    // règles de séjour, utiles AVANT le clic.
+    const hints = d.past ? [] : [
       d.minNights > 1 ? t("{n} nuits minimum", { n: d.minNights }) : "",
       d.arrivalDays != null ? arrivalLabel(d.arrivalDays) : "",
     ].filter(Boolean);
@@ -426,13 +436,19 @@ async function renderCalendar() {
     // Prévisualisation au survol : arrivée choisie, départ pas encore — les
     // jours entre l'arrivée et le curseur s'annoncent en clair. Rien quand la
     // sélection est complète ou sur un jour non cliquable.
+    // Le nettoyage se fait sur TOUTE la grille à chaque événement : le curseur
+    // colore la plage entière d'un coup, il faut la décolorer entière aussi,
+    // sinon les cases déjà quittées gardent la marque et la prévisualisation
+    // s'accumule au fil des mouvements.
+    const clearHoverRange = () => $("calGrid").querySelectorAll(".hover-range").forEach((c) => c.classList.remove("hover-range"));
     cell.addEventListener("mouseenter", () => {
+      clearHoverRange();
       if (!selIn || selOut || cell.classList.contains("past") || cell.classList.contains("full") || cell.dataset.date <= selIn) return;
       $("calGrid").querySelectorAll(".pday[data-date]").forEach((c) => {
         if (c.dataset.date > selIn && c.dataset.date <= cell.dataset.date) c.classList.add("hover-range");
       });
     });
-    cell.addEventListener("mouseleave", () => cell.classList.remove("hover-range"));
+    cell.addEventListener("mouseleave", clearHoverRange);
   });
   renderCalRules(days, data.minLeadDays);
 }

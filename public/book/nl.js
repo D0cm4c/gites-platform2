@@ -300,10 +300,7 @@ export const NL = {
   "Message envoyé à l'équipe — la réponse arrive sur cette page et par e-mail.": "Bericht verstuurd naar het team — het antwoord komt op deze pagina en per e-mail.",
   "arrivée": "aankomst",
   "départ": "vertrek",
-  "→ 18 h": "→ 18 u",
-  "← 18 h": "← 18 u",
-  "Départ le matin, arrivée possible le soir": "Vertrek 's ochtends, aankomst mogelijk 's avonds",
-  "Arrivée d'un séjour ce soir — journée libre jusqu'à l'arrivée": "Aankomst van een verblijf vanavond — dag vrij tot de aankomst",
+
   // Page Merci : adresse de la confirmation et renvoi à une autre adresse.
   "Adresse e-mail": "E-mailadres",
   "Aucun montant n'a été débité. Pour réessayer, reprenez le lien de paiement que vous avez reçu, ou contactez-nous.": "Er is niets afgeschreven. Om opnieuw te proberen, gebruik de betaallink die u ontvangen hebt, of neem contact met ons op.",

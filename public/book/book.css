@@ -163,6 +163,13 @@ a{color:var(--accent)}
 .pday.turnover.sel{background:var(--accent)}
 .pday.turnover.sel .p{color:#fff}
 .pday.turnover.range{background:#E6EFE8}
+/* Jour d'ARRIVÉE d'un séjour (début) : la journée est libre, la nuit est prise.
+   Miroir du turnover : la moitié occupée est en BAS (l'arrivée du soir occupe
+   la suite), la moitié haute reste libre. Le jour sort « complet » — la marque
+   dit pourquoi, elle ne change rien à la vente. */
+.pday.arrival{background:linear-gradient(180deg,#fff 0%,#fff 49%,#F1EFE9 51%,#F1EFE9 100%)}
+.pday.arrival .p{color:#8a7a45;font-weight:600}
+.pday.arrival:hover{border-color:var(--accent)}
 .pcal-rules{font-size:13.5px;color:var(--muted);margin:6px 0 0}
 .pcal-rules .rule{display:inline-block}
 /* Pictogrammes de la légende — mêmes couleurs que les liserés des cases. */

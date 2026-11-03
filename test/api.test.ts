@@ -526,12 +526,17 @@ describe("calendriers et multi-biens (v2)", () => {
     const month = inA.slice(0, 7);
     const { status, data } = await call("GET", `/api/public/calendar?property=pre-more&month=${month}`);
     expect(status).toBe(200);
-    const byId = new Map((data.units as { unitId: number; days: { date: string; available: boolean; turnover: boolean }[] }[]).map((u) => [u.unitId, u]));
+    const byId = new Map((data.units as { unitId: number; days: { date: string; available: boolean; turnover: boolean; arrivalDay: boolean }[] }[]).map((u) => [u.unitId, u]));
     // La Scierie : le jour de départ de la résa tourne, les autres non.
     const scierie = byId.get(2)!.days;
     expect(scierie.find((d) => d.date === outA)!.turnover).toBe(true);
     expect(scierie.find((d) => d.date === outA)!.available).toBe(true);
     expect(scierie.find((d) => d.date === addDays(outA, 1))!.turnover).toBe(false);
+    // Le jour d'ARRIVÉE : marqué comme début de séjour, et la nuit étant prise,
+    // le jour sort « complet » — la marque explique, elle ne vend pas.
+    expect(scierie.find((d) => d.date === inA)!.arrivalDay).toBe(true);
+    expect(scierie.find((d) => d.date === inA)!.available).toBe(false);
+    expect(scierie.find((d) => d.date === addDays(inA, -1))!.arrivalDay).toBe(false);
     // Le Domaine entier tourne AUSSI ce jour-là (liaison) ; la Maison du Scieur non.
     expect(byId.get(3)!.days.find((d) => d.date === outA)!.turnover).toBe(true);
     expect(byId.get(1)!.days.find((d) => d.date === outA)!.turnover).toBe(false);

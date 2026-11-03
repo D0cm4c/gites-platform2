@@ -666,21 +666,28 @@ export function registerPublicRoutes(router: Router): void {
         isComposite: u.isComposite,
         days: rates.map((r) => {
           const available = r.date >= bookableFrom && isUnitFree(u.id, r.date, addDays(r.date, 1), spans, links, now);
-          // Jour de rotation (demande du 02/11) : un départ ce jour-là, puis une
-          // nuit libre. Le jour est RÉSERVABLE (départ le matin, arrivée à 18 h) —
-          // mais un client qui voit « libre » sur le 25 décembre sans contexte
-          // croit à tort qu'il peut y passer la nuit du 24. Le champ est purement
-          // indicatif : le tunnel l'affiche, la disponibilité ne change pas.
-          // Précis : au moins un départ, AUCUNE réservation couvrant la nuit
-          // suivante — sinon le jour serait de toute façon « complet ».
-          const turnover =
-            available &&
-            spans.some(
-              (s) =>
-                blockersOf(u.id).has(s.unitId) &&
-                isActiveBooking(s, now) &&
-                s.checkout === r.date,
-            );
+          // Jours « à moitié occupés » (demande du 02/11) — la journée est coupée
+          // en deux par une réservation, sans qu'aucune nuit ne soit prise :
+          //   • turnover (FIN de séjour) : départ le matin, la nuit est libre.
+          //     Le jour est RÉSERVABLE en arrivée — mais un client qui voit
+          //     « libre » sans contexte croit à tort arriver la veille.
+          //   • arrivalDay (DÉBUT de séjour) : libre la journée, occupé dès
+          //     l'arrivée du soir. La NUIT est prise — le jour sort « complet »
+          //     normalement ; la marque dit simplement POURQUOI : une arrivée
+          //     « débarque » à l'heure d'entrée, la maison n'est pas perdue pour
+          //     autant côté visite.
+          // Les deux champs sont purement indicatifs : le tunnel les affiche,
+          // la disponibilité ne change pas d'un centime.
+          // Précis (turnover) : au moins un départ, AUCUNE réservation couvrant
+          // la nuit suivante — sinon le jour serait de toute façon « complet ».
+          const activeSpans = spans.filter(
+            (s) => blockersOf(u.id).has(s.unitId) && isActiveBooking(s, now),
+          );
+          const turnover = available && activeSpans.some((s) => s.checkout === r.date);
+          // Un jour d'arrivée : une réservation DÉBUTE ce jour-là. Rare avec
+          // turnover (rotation le jour même) — les deux marques peuvent
+          // coexister, l'affichage privilégie alors le début de séjour.
+          const arrivalDay = activeSpans.some((s) => s.checkin === r.date);
           return {
             date: r.date,
             past: r.date < bookableFrom,
@@ -691,6 +698,7 @@ export function registerPublicRoutes(router: Router): void {
             // un refus arbitraire une fois les dates choisies (issue #66).
             checkinDays: r.checkinDays,
             turnover,
+            arrivalDay,
           };
         }),
       };

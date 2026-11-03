@@ -394,15 +394,21 @@ async function renderCalendar() {
     const mnCls = !d.past && d.available && d.minNights > 1 ? ` mn${Math.min(d.minNights, 4)}` : "";
     // Jour de rotation : marqué dans la classe, le prix laisse la place au
     // mot-clé « rotation » dans la case — l'info prime sur le « dès X € ».
+    // Marque compacte : les cases sont petites, le texte intégral (« départ le
+    // matin », « arrivée le soir ») ne tient pas. Une flèche dit le mouvement,
+    // le title porte la phrase entière au survol.
     const turnCls = d.turnover && !d.past && d.available ? " turnover" : "";
+    const arriveCls = d.arrivalDay && !d.past ? " arrival" : "";
     const cls = ["pday", d.past ? "past" : "", !d.past && !d.available ? "full" : "",
-      noArrival ? "noarr" : "", isSel ? "sel" : "", isOut ? "dep" : "", inRange ? "range" : ""].join(" ") + start + end + mnCls + turnCls;
+      noArrival ? "noarr" : "", isSel ? "sel" : "", isOut ? "dep" : "", inRange ? "range" : ""].join(" ") + start + end + mnCls + turnCls + arriveCls;
     // Case du départ : ni prix ni minimum, ce n'est pas une nuit payée.
-    const sub = isOut ? t("départ") : d.past ? "" : d.available ? (d.turnover ? t("rotation 18 h") : d.minPrice != null ? t("dès {prix}", { prix: eurRound(d.minPrice) }) : "") : t("complet");
+    const sub = isOut ? t("départ") : d.past ? "" : d.available ? (d.turnover ? t("→ 18 h") : d.minPrice != null ? t("dès {prix}", { prix: eurRound(d.minPrice) }) : "") : d.arrivalDay ? t("← 18 h") : t("complet");
     // Le minimum de nuits est écrit DANS la case : c'est la seule façon de le
     // voir avant d'avoir choisi ses dates (impasse n° 5 du parcours au clic).
     const mn = !isOut && !d.past && d.available && d.minNights > 1 ? `<span class="mn">${t("min {n} n", { n: d.minNights })}</span>` : "";
-    const hints = d.past || !d.available ? [] : [
+    const hints = d.past || (!d.available && !d.arrivalDay) ? [] : [
+      d.turnover ? t("Départ le matin, arrivée possible le soir") : "",
+      !d.available && d.arrivalDay ? t("Arrivée d'un séjour ce soir — journée libre jusqu'à l'arrivée") : "",
       d.minNights > 1 ? t("{n} nuits minimum", { n: d.minNights }) : "",
       d.arrivalDays != null ? arrivalLabel(d.arrivalDays) : "",
     ].filter(Boolean);

@@ -21,9 +21,15 @@ const ADMIN_USER = "julie";
 const ADMIN = `${ADMIN_USER}:motdepasse-test`;
 const SCIEUR = 1; // La Maison du Scieur — mappée sur une room Beds24 dans le seed
 
-// Fenêtre très en avant. Elle peut tomber dans une saison du seed selon le
-// jour : les tests y posent une surcharge, qui prime sur toute saison.
-const FROM = addDays(todayInZone(), 300);
+// Fenêtre très en avant, et HORS TOUTE SAISON DU SEED. Le prix posé par les
+// tests (200 €) prime sur toute saison, mais le MINIMUM de nuits, lui, vient
+// de la règle (l'override n'en pose pas) : une fenêtre à cheval sur une
+// saison du seed (ex. « Haute — juillet-août 2027 », jusqu'au 31/08) produirait
+// deux plages compactées (minStay 7 puis 2) et casserait les attentes en
+// tableau. On saute donc toute saison du seed de la propriété 1 : la plus
+// lointaine finit le 31/08/2027 — à partir du 1er septembre 2027, plus rien
+// ne couvre, pour toujours.
+const FROM = todayInZone() > "2027-08-31" ? addDays(todayInZone(), 300) : "2027-09-10";
 
 let t: TestDb;
 let env: Env;

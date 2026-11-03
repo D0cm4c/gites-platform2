@@ -6,7 +6,7 @@
 import { apiError, json, readJson, Router } from "./router";
 import { proposedDays } from "../core/option-days";
 import { addDays, diffDays, isIsoDate, sqlNow, todayInZone, type IsoDate } from "../core/dates";
-import { blockingSourceUnitIds, blocksAsSpans, isUnitFree } from "../core/availability";
+import { blockingSourceUnitIds, blockingUnitIds, blocksAsSpans, isActiveBooking, isUnitFree } from "../core/availability";
 import { firstBookableDate, rateCalendar, type UnitPricingInfo } from "../core/pricing";
 import { suggestStays, type NightOption, type StaySuggestion } from "../core/stay-options";
 import { checkoutTimeFor } from "../core/checkout-time";
@@ -631,6 +631,14 @@ export function registerPublicRoutes(router: Router): void {
     ];
     const active = units.filter((u) => u.active);
     const physicalIds = new Set(active.filter((u) => !u.isComposite).map((u) => u.id));
+    // Ensemble bloquant par unité (soi-même + liés), précalculé une fois pour
+    // la marque de rotation ci-dessous — même règle que isUnitFree.
+    const blockersCache = new Map<number, Set<number>>();
+    const blockersOf = (uid: number) => {
+      let s = blockersCache.get(uid);
+      if (!s) { s = blockingUnitIds(uid, links); blockersCache.set(uid, s); }
+      return s;
+    };
 
     const toPricingUnit = (u: UnitRow): UnitPricingInfo => ({
       id: u.id,
@@ -656,16 +664,35 @@ export function registerPublicRoutes(router: Router): void {
         unitId: u.id,
         name: u.name,
         isComposite: u.isComposite,
-        days: rates.map((r) => ({
-          date: r.date,
-          past: r.date < bookableFrom,
-          available: r.date >= bookableFrom && isUnitFree(u.id, r.date, addDays(r.date, 1), spans, links, now),
-          priceCents: r.priceCents,
-          minNights: r.minNights,
-          // Jours d'arrivée imposés — invisibles jusqu'ici, donc vécus comme
-          // un refus arbitraire une fois les dates choisies (issue #66).
-          checkinDays: r.checkinDays,
-        })),
+        days: rates.map((r) => {
+          const available = r.date >= bookableFrom && isUnitFree(u.id, r.date, addDays(r.date, 1), spans, links, now);
+          // Jour de rotation (demande du 02/11) : un départ ce jour-là, puis une
+          // nuit libre. Le jour est RÉSERVABLE (départ le matin, arrivée à 18 h) —
+          // mais un client qui voit « libre » sur le 25 décembre sans contexte
+          // croit à tort qu'il peut y passer la nuit du 24. Le champ est purement
+          // indicatif : le tunnel l'affiche, la disponibilité ne change pas.
+          // Précis : au moins un départ, AUCUNE réservation couvrant la nuit
+          // suivante — sinon le jour serait de toute façon « complet ».
+          const turnover =
+            available &&
+            spans.some(
+              (s) =>
+                blockersOf(u.id).has(s.unitId) &&
+                isActiveBooking(s, now) &&
+                s.checkout === r.date,
+            );
+          return {
+            date: r.date,
+            past: r.date < bookableFrom,
+            available,
+            priceCents: r.priceCents,
+            minNights: r.minNights,
+            // Jours d'arrivée imposés — invisibles jusqu'ici, donc vécus comme
+            // un refus arbitraire une fois les dates choisies (issue #66).
+            checkinDays: r.checkinDays,
+            turnover,
+          };
+        }),
       };
     });
     return json({ property: property.slug, month, from, today, minLeadDays: settings.minLeadDays, bookableFrom, units: out });

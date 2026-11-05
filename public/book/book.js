@@ -466,7 +466,7 @@ async function renderCalendar() {
         if (c.dataset.date > selIn && c.dataset.date <= cell.dataset.date) c.classList.add("hover-range", ...(short ? ["short"] : []));
       });
       // Compte de nuits dynamique sur la case d'arrivée : le prix laisse la
-n      // place au séjour envisagé, et revient au nettoyage.
+      // place au séjour envisagé, et revient au nettoyage.
       const inCell = $("calGrid").querySelector(`.pday[data-date="${selIn}"]`);
       const p = inCell?.querySelector(".p");
       if (p) {

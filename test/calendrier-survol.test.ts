@@ -40,3 +40,17 @@ describe("survol de plage : minimum de nuits visible avant le clic (demande n° 
     expect(JS).toMatch(/classList\.remove\("hover-range", "short"\)/);
   });
 });
+
+describe("book.js : aucun identifiant orphelin (coquille d'édition qui plante à l'exécution)", () => {
+  it("aucune ligne n'est un identifiant seul suivi d'un commentaire — motif qui passe node --check mais jette ReferenceError", () => {
+    // Née d'un vrai bug (03/11) : « n      // place au séjour envisagé » — le
+    // gestionnaire mouseenter plantait en silence après les hover-range, le
+    // compte de nuits n'apparaissait jamais. node --check valide ce motif ;
+    // seul un balayage des lignes l'attrape.
+    const suspects = JS.split("\n")
+      .map((l, i) => ({ l: i + 1, t: l.trim() }))
+      .filter(({ t }) => /^[A-Za-z_$][\w$]*\s*(\/\/.*)?$/.test(t))
+      .filter(({ t }) => !/^(use strict|debugger)$/.test(t));
+    expect(suspects, JSON.stringify(suspects)).toEqual([]);
+  });
+});

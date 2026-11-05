@@ -147,6 +147,19 @@ a{color:var(--accent)}
    en évidence de la plage, comme les autres, pour que le séjour se lise d'un
    coup d'œil. Sans cette règle, les hachures de noarr écrasent range. */
 .pday.noarr.range{background:#E6EFE8;border-color:#CBD8CD}
+/* Même priorité pour la PRÉVISUALISATION au survol : les hachures de noarr
+   n'écrasent pas plus la plage annoncée que la plage choisie (fix du 03/11,
+   complété ici : la règle manquait pour le survol). */
+.pday.noarr.hover-range{background:#E6EFE8;border-color:#CBD8CD}
+/* Minimum de nuits pas encore atteint : la plage survolée reste « en attente »
+   (ambré) tant que le minimum du jour d'arrivée n'est pas couvert ; elle
+   prend la teinte définitive au-delà. La contrainte se voit AVANT le refus
+   du devis, sans un mot. */
+.pday.hover-range.short{background:#F7EDD8;border-color:#E4CE9C}
+.pday.noarr.hover-range.short{background:#F7EDD8;border-color:#E4CE9C}
+/* Compte de nuits dynamique sur la case d'arrivée pendant le survol : le prix
+   laisse la place au séjour envisagé. */
+.pday .p.live-nights{font-weight:600}
 /* Sur les jours de la plage, le prix est une information secondaire : on
    l'estompe pour que la période se lise d'abord, le prix reste sur place. */
 .pday.range .p{color:var(--muted)}

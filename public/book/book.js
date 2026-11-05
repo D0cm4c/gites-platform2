@@ -440,13 +440,40 @@ async function renderCalendar() {
     // colore la plage entière d'un coup, il faut la décolorer entière aussi,
     // sinon les cases déjà quittées gardent la marque et la prévisualisation
     // s'accumule au fil des mouvements.
-    const clearHoverRange = () => $("calGrid").querySelectorAll(".hover-range").forEach((c) => c.classList.remove("hover-range"));
+    // Nettoyage complet : la plage survolée ET le compte de nuits posé sur la
+    // case d'arrivée repartent ensemble — sinon l'un traîne sans l'autre.
+    const clearHoverRange = () => {
+      $("calGrid").querySelectorAll(".hover-range").forEach((c) => c.classList.remove("hover-range", "short"));
+      $("calGrid").querySelectorAll(".p.live-nights").forEach((p) => {
+        if (p.dataset.orig != null) p.textContent = p.dataset.orig;
+        delete p.dataset.orig;
+        p.classList.remove("live-nights");
+      });
+    };
     cell.addEventListener("mouseenter", () => {
       clearHoverRange();
       if (!selIn || selOut || cell.classList.contains("past") || cell.classList.contains("full") || cell.dataset.date <= selIn) return;
+      // Minimum de nuits du jour d'ARRIVÉE : tant qu'il n'est pas atteint, la
+      // plage survolée s'affiche en attente (ambré) ; atteint, elle prend la
+      // teinte définitive. La contrainte se VOIT avant le refus du devis.
+      const nights = nightsBetween(selIn, cell.dataset.date);
+      const minN = days.find((x) => x.date === selIn)?.minNights || 1;
+      const short = nights < minN;
       $("calGrid").querySelectorAll(".pday[data-date]").forEach((c) => {
-        if (c.dataset.date > selIn && c.dataset.date <= cell.dataset.date) c.classList.add("hover-range");
+        // Les jours pris ou passés ne font partie d'aucun séjour possible :
+        // ils gardent leur gris, la prévisualisation ne les traverse pas.
+        if (c.classList.contains("past") || c.classList.contains("full")) return;
+        if (c.dataset.date > selIn && c.dataset.date <= cell.dataset.date) c.classList.add("hover-range", ...(short ? ["short"] : []));
       });
+      // Compte de nuits dynamique sur la case d'arrivée : le prix laisse la
+n      // place au séjour envisagé, et revient au nettoyage.
+      const inCell = $("calGrid").querySelector(`.pday[data-date="${selIn}"]`);
+      const p = inCell?.querySelector(".p");
+      if (p) {
+        p.dataset.orig = p.textContent;
+        p.textContent = pl(nights, "nuit", "nuits");
+        p.classList.add("live-nights");
+      }
     });
     cell.addEventListener("mouseleave", clearHoverRange);
   });

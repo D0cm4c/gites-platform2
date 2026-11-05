@@ -40,3 +40,12 @@ describe("survol de plage : minimum de nuits visible avant le clic (demande n° 
     expect(JS).toMatch(/classList\.remove\("hover-range", "short"\)/);
   });
 });
+
+describe("re-clic sur le jour d'arrivée : dé-sélection (demande n° 3 du 03/11)", () => {
+  it("re-cliquer l'arrivée sans départ posé repart de zéro", () => {
+    // La garde AVANT le traitement normal : date === selIn sans départ → selIn effacé.
+    expect(JS).toMatch(/date === selIn && !selOut/);
+    expect(JS).toMatch(/selIn = null;\s*\n\s*renderCalendar\(\);/);
+    expect(JS).toMatch(/onSelectionChange\(\);\s*\n\s*return;/);
+  });
+});

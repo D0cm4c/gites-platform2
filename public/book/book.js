@@ -513,6 +513,15 @@ function renderCalRules(days, minLeadDays = 0) {
 function onDayClick(date, cell) {
   if (cell.classList.contains("past")) return;
   const isFull = cell.classList.contains("full");
+  // Re-clic sur le jour d'arrivée (départ pas encore choisi) : on repart de
+  // zéro. Sans ça, changer d'avis obligeait à cliquer un AUTRE jour d'abord —
+  // l'arrivée restait coincée tant qu'aucun départ ne la libérait.
+  if (date === selIn && !selOut) {
+    selIn = null;
+    renderCalendar();
+    onSelectionChange();
+    return;
+  }
   const asArrival = !selIn || Boolean(selOut) || date <= selIn;
   // Un jour sans arrivée (samedi, dimanche…) reste cliquable comme DÉPART, mais
   // jamais comme arrivée : le refus tombait seulement au devis (24/10/2026).
